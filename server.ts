@@ -1198,19 +1198,16 @@ app.post("/api/broker/sync/dhan", async (req, res) => {
 });
 
 async function startServer() {
-  // Vite integration
+  // Vite integration (Only for local development)
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
+
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    console.log("Production API server running");
   }
 
   app.listen(PORT, "0.0.0.0", () => {
