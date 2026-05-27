@@ -1,0 +1,319 @@
+{
+  "entities": {
+    "Setting": {
+      "title": "Setting",
+      "description": "Global application configurations, including login keys",
+      "type": "object",
+      "properties": {
+        "masterKey": {
+          "type": "string",
+          "description": "Permanent developer key"
+        },
+        "changeableKey": {
+          "type": "string",
+          "description": "Secondary password key changeable by the user"
+        },
+        "theme": {
+          "type": "string",
+          "description": "Visual theme (light/dark)"
+        }
+      },
+      "required": ["masterKey", "changeableKey"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Income and expense transactions",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["income", "expense"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "category": {
+          "type": "string"
+        },
+        "subCategory": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array"
+        },
+        "date": {
+          "type": "string"
+        },
+        "editHistory": {
+          "type": "array"
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": ["type", "amount", "category", "date"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Transaction category configuration",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "subCategories": {
+          "type": "array"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["income", "expense", "both"]
+        }
+      },
+      "required": ["name", "subCategories", "type"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "Habit master record",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "archived": {
+          "type": "boolean"
+        }
+      },
+      "required": ["name", "archived"]
+    },
+    "HabitLog": {
+      "title": "HabitLog",
+      "description": "Habit daily completion log",
+      "type": "object",
+      "properties": {
+        "habitId": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "completed": {
+          "type": "boolean"
+        }
+      },
+      "required": ["habitId", "date", "completed"]
+    },
+    "Journal": {
+      "title": "Journal",
+      "description": "User journal entry",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "mood": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array"
+        },
+        "editHistory": {
+          "type": "array"
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": ["date", "content", "mood"]
+    },
+    "Gratitude": {
+      "title": "Gratitude",
+      "description": "Gratitude prompts and answers",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array"
+        },
+        "attachments": {
+          "type": "array"
+        }
+      },
+      "required": ["date", "entries"]
+    },
+    "SpiritualMessage": {
+      "title": "SpiritualMessage",
+      "description": "God and Angel messages",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["god", "angel"]
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "required": ["type", "message", "active"]
+    },
+    "Loan": {
+      "title": "Loan",
+      "description": "Installment loan or thavanai tracker",
+      "type": "object",
+      "properties": {
+        "borrowerName": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "deductedInterest": {
+          "type": "number"
+        },
+        "totalInstallments": {
+          "type": "integer"
+        },
+        "installmentAmount": {
+          "type": "number"
+        },
+        "frequency": {
+          "type": "string"
+        },
+        "dateTaken": {
+          "type": "string"
+        },
+        "installments": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["live", "closed"]
+        }
+      },
+      "required": ["borrowerName", "amount", "installmentAmount", "totalInstallments", "status"]
+    },
+    "TempLoan": {
+      "title": "TempLoan",
+      "description": "Short-term/informal personal lending",
+      "type": "object",
+      "properties": {
+        "personName": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dateBorrowed": {
+          "type": "string"
+        },
+        "payments": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["live", "closed"]
+        }
+      },
+      "required": ["personName", "amount", "status"]
+    },
+    "FormalLoan": {
+      "title": "FormalLoan",
+      "description": "Gold, personal, or housing loan records with bank/lender details",
+      "type": "object",
+      "properties": {
+        "loanType": {
+          "type": "string",
+          "enum": ["gold", "personal", "housing"]
+        },
+        "bank": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "goldWeight": {
+          "type": "number"
+        },
+        "interestRate": {
+          "type": "number"
+        },
+        "interestType": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["live", "closed"]
+        }
+      },
+      "required": ["loanType", "bank", "amount", "status"]
+    }
+  },
+  "firestore": {
+    "/settings": {
+      "schema": { "$ref": "#/entities/Setting" },
+      "description": "Master and secondary login details"
+    },
+    "/transactions": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Collection of all financial transaction entries"
+    },
+    "/categories": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Pre-loaded but fully customizable list of finance categories"
+    },
+    "/habits": {
+      "schema": { "$ref": "#/entities/Habit" },
+      "description": "Interactive day-to-day habit definitions"
+    },
+    "/habitLogs": {
+      "schema": { "$ref": "#/entities/HabitLog" },
+      "description": "Daily logging of habit completion metrics"
+    },
+    "/journals": {
+      "schema": { "$ref": "#/entities/Journal" },
+      "description": "Secure encrypted daily journal thoughts and attachments"
+    },
+    "/gratitude": {
+      "schema": { "$ref": "#/entities/Gratitude" },
+      "description": "Daily gratitude logs featuring prompts and attachment items"
+    },
+    "/spiritualMessages": {
+      "schema": { "$ref": "#/entities/SpiritualMessage" },
+      "description": "Inspirational messages designed to motivate or guide"
+    },
+    "/loans": {
+      "schema": { "$ref": "#/entities/Loan" },
+      "description": "Formal EMI/Thavanai installment tracker profiles"
+    },
+    "/tempLoans": {
+      "schema": { "$ref": "#/entities/TempLoan" },
+      "description": "Short-term temporary borrowing logs"
+    },
+    "/formalLoans": {
+      "schema": { "$ref": "#/entities/FormalLoan" },
+      "description": "Bank-sourced personal, auto, or gold loans"
+    }
+  }
+}

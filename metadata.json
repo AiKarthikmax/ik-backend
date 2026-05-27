@@ -1,0 +1,6 @@
+{
+  "name": "Maha Personal Finance Management",
+  "description": "Premium multi-module personal financial management tracking, daily habits logger, journal, and loan tracker featuring server-side Gemini AI companion suggestions.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

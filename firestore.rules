@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    // 2. Settings Path Rules
+    match /settings/{id} {
+      allow read: if true; // Needs public or unauthenticated read for verifying login key before fully logged in
+      allow write: if isSignedIn();
+    }
+
+    // 3. Transactions Collection
+    match /transactions/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 4. Categories Collection
+    match /categories/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 5. Habits Collection
+    match /habits/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 6. HabitLogs Collection
+    match /habitLogs/{userId} {
+      allow read, write: if isSignedIn();
+      match /{date}/{habitId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // 7. Journals Collection
+    match /journals/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 8. Gratitude Collection
+    match /gratitude/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 9. SpiritualMessages Collection
+    match /spiritualMessages/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 10. Loans Collection
+    match /loans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+
+    // 11. TempLoans Collection
+    match /tempLoans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+      match /payments/{paymentId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // 12. FormalLoans Collection
+    match /formalLoans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+      match /payments/{paymentId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // 13. Users Collection
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      match /settings/{docId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // 14. Archived Collections
+    match /archived_tempLoans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+      match /payments/{paymentId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+    match /archived_formalLoans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+      match /payments/{paymentId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+    match /archived_loans/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+    match /archived_transactions/{id} {
+      allow read, write: if isSignedIn() && isValidId(id);
+    }
+  }
+}
