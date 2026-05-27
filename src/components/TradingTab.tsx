@@ -530,7 +530,7 @@ export default function TradingTab() {
   const getPreMarketAiPrediction = async () => {
     setFetchingPreMarket(true);
     try {
-      const res = await fetch("/api/ai", {
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -556,7 +556,7 @@ export default function TradingTab() {
   const getLiveMoveAiSuggestion = async () => {
     setFetchingLiveMove(true);
     try {
-      const res = await fetch("/api/ai", {
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -589,7 +589,7 @@ export default function TradingTab() {
     if (!targetEvent) return;
 
     try {
-      const res = await fetch("/api/ai", {
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -826,7 +826,7 @@ export default function TradingTab() {
     if (!currentMarketData) return;
     setFetchingAiSummary(true);
     try {
-      const res = await fetch("/api/ai", {
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -865,7 +865,7 @@ export default function TradingTab() {
     try {
       let gData: any = null;
       try {
-        const gRes = await fetch("/api/market/global");
+        const gRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/global");
         const text = await gRes.text();
         gData = JSON.parse(text);
       } catch (err) {
@@ -1000,7 +1000,7 @@ export default function TradingTab() {
   const fetchNewsAndFiiDii = async () => {
     try {
       try {
-        const nRes = await fetch("/api/market/news");
+        const nRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/news");
         const nText = await nRes.text();
         const nData = JSON.parse(nText);
         setNews(nData);
@@ -1010,7 +1010,7 @@ export default function TradingTab() {
       }
 
       try {
-        const fRes = await fetch("/api/market/fii-dii");
+        const fRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/fii-dii");
         const fText = await fRes.text();
         const fData = JSON.parse(fText);
         setFiiDii(fData);
@@ -1025,7 +1025,7 @@ export default function TradingTab() {
 
   const fetchEvents = async () => {
     try {
-      const res = await fetch("/api/market/events");
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/market/events");
       const text = await res.text();
       const data = JSON.parse(text);
       if (Array.isArray(data) && data.length > 0) {
@@ -1327,7 +1327,7 @@ export default function TradingTab() {
       const emotions = tradesList.map(t => t.mindsetBefore);
       const exitReasons = tradesList.map(t => t.exitReason);
       
-      const res = await fetch("/api/ai", {
+      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1709,7 +1709,7 @@ export default function TradingTab() {
         await new Promise(r => setTimeout(r, 600));
         logger(`Fetching trades from ${syncFromDate} to ${syncToDate}...`);
 
-        const response = await fetch("/api/broker/sync/dhan", {
+        const response = await fetch("https://ik-backend-crg8.onrender.com/api/broker/sync/dhan", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
