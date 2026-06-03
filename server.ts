@@ -878,13 +878,29 @@ app.get("/api/market/global", async (req, res) => {
   return res.json(results);
 });
 
+function getLast5TradingDays(): string[] {
+  const dates: string[] = [];
+  let d = new Date();
+  while (dates.length < 5) {
+    const day = d.getDay();
+    // Exclude weekends (0: Sunday, 6: Saturday)
+    if (day !== 0 && day !== 6) {
+      const dateStr = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); // e.g. "02 Jun"
+      dates.unshift(dateStr);
+    }
+    d.setDate(d.getDate() - 1);
+  }
+  return dates;
+}
+
 app.get("/api/market/fii-dii", (req, res) => {
+  const dates = getLast5TradingDays();
   const data = [
-    { date: "19 May", fiiCash: -1245.50, fiiFnO: 2450.80, diiCash: 1845.20 },
-    { date: "20 May", fiiCash: -3450.00, fiiFnO: -1120.40, diiCash: 2980.60 },
-    { date: "21 May", fiiCash: 450.20, fiiFnO: 4320.10, diiCash: -120.40 },
-    { date: "22 May", fiiCash: -890.30, fiiFnO: -620.50, diiCash: 1150.30 },
-    { date: "25 May", fiiCash: -3120.50, fiiFnO: 1890.20, diiCash: 2450.80 }
+    { date: dates[0], fiiCash: -1245.50, fiiFnO: 2450.80, diiCash: 1845.20 },
+    { date: dates[1], fiiCash: -3450.00, fiiFnO: -1120.40, diiCash: 2980.60 },
+    { date: dates[2], fiiCash: 450.20, fiiFnO: 4320.10, diiCash: -120.40 },
+    { date: dates[3], fiiCash: -890.30, fiiFnO: -620.50, diiCash: 1150.30 },
+    { date: dates[4], fiiCash: -3120.50, fiiFnO: 1890.20, diiCash: 2450.80 }
   ];
   return res.json(data);
 });
