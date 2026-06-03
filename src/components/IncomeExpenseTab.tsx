@@ -11,10 +11,11 @@ import {
   deleteDoc,
   writeBatch
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
+import { db, handleFirestoreError, OperationType, getApiUrl } from "../firebase";
 import { Transaction, Category, PRELOADED_CATEGORIES, Loan, TempLoan, FormalLoan } from "../types";
 import { handleFileUpload } from "../attachmentHelper";
 import ConfirmModal from "./ConfirmModal";
+import ImageCropperModal from "./ImageCropperModal";
 import {
   Plus,
   Trash,
@@ -56,6 +57,10 @@ export default function IncomeExpenseTab() {
   const [type, setType] = useState<"income" | "expense">("expense");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("");
+  
+  // Image Crop state
+  const [cropImageSrc, setCropImageSrc] = useState<string>("");
+  const [cropImageName, setCropImageName] = useState<string>("");
   const [subCategory, setSubCategory] = useState("");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
@@ -174,8 +179,12 @@ export default function IncomeExpenseTab() {
         snapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() } as Transaction);
         });
-        // Sort by date descending
-        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        // Sort by datetime descending (latest first)
+        list.sort((a, b) => {
+          const dtA = new Date(`${a.date} ${a.time || "00:00:00"}`).getTime();
+          const dtB = new Date(`${b.date} ${b.time || "00:00:00"}`).getTime();
+          return (isNaN(dtB) ? new Date(b.date).getTime() : dtB) - (isNaN(dtA) ? new Date(a.date).getTime() : dtA);
+        });
         setTransactions(list);
         setLoading(false);
       },
@@ -192,8 +201,12 @@ export default function IncomeExpenseTab() {
         snapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() } as Transaction);
         });
-        // Sort by date descending
-        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        // Sort by datetime descending (latest first)
+        list.sort((a, b) => {
+          const dtA = new Date(`${a.date} ${a.time || "00:00:00"}`).getTime();
+          const dtB = new Date(`${b.date} ${b.time || "00:00:00"}`).getTime();
+          return (isNaN(dtB) ? new Date(b.date).getTime() : dtB) - (isNaN(dtA) ? new Date(a.date).getTime() : dtA);
+        });
         setArchivedTransactions(list);
       },
       (error) => {
@@ -349,6 +362,7 @@ export default function IncomeExpenseTab() {
 
   const last6Months = Array.from({ length: 6 }).map((_, i) => {
     const d = new Date();
+    d.setDate(1); // Reset day of the month to 1 to prevent overflow (e.g. Feb 31 -> Mar 3)
     d.setMonth(d.getMonth() - i);
     const mStr = d.toISOString().slice(0, 7);
     const mLabel = d.toLocaleString("default", { month: "short" });
@@ -366,13 +380,20 @@ export default function IncomeExpenseTab() {
     setAiLoading(true);
     setAiSuggestion("");
     try {
-      const response = await fetch("/api/ai", {
+      const response = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "expense",
           payload: {
-            transactions: activeTransactions.slice(0, 30) // Provide recent window
+            transactions: activeTransactions.slice(0, 30).map((t) => ({
+              id: t.id,
+              amount: t.amount,
+              category: t.category,
+              date: t.date,
+              description: t.description || "",
+              type: t.type
+            }))
           }
         })
       });
@@ -410,7 +431,7 @@ export default function IncomeExpenseTab() {
     return null;
   };
 
-  // Camera Photo capturing
+  // Camera Photo capturing with visual Crop Modal trigger
   const triggerCamera = async () => {
     try {
       const input = document.createElement("input");
@@ -420,22 +441,32 @@ export default function IncomeExpenseTab() {
       input.onchange = async (e: any) => {
         const file = e.target.files?.[0];
         if (file) {
-          setUploading(true);
-          setFormError("");
-          try {
-            const attach = await handleFileUpload(file, "transactions", file.name || "photo.jpg");
-            setTempAttachments((prev) => [...prev, attach]);
-          } catch (err: any) {
-            console.error("Camera upload error:", err);
-            setFormError(err.message || "Failed to process captured image.");
-          } finally {
-            setUploading(false);
-          }
+          const reader = new FileReader();
+          reader.onload = () => {
+            setCropImageSrc(reader.result as string);
+            setCropImageName(file.name || "photo.jpg");
+          };
+          reader.readAsDataURL(file);
         }
       };
       input.click();
     } catch (err) {
       alert("Camera access returned error.");
+    }
+  };
+
+  const handleCroppedImage = async (croppedFile: File) => {
+    setCropImageSrc("");
+    setUploading(true);
+    setFormError("");
+    try {
+      const attach = await handleFileUpload(croppedFile, "transactions", croppedFile.name);
+      setTempAttachments((prev) => [...prev, attach]);
+    } catch (err: any) {
+      console.error("Camera upload error:", err);
+      setFormError(err.message || "Failed to process captured image.");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -870,6 +901,150 @@ export default function IncomeExpenseTab() {
       alert("Could not delete sub-category.");
     }
   };
+
+  // Render helper for transaction cards
+  const renderTransactionCard = (t: Transaction) => (
+    <div
+      id={`trans-${t.id}`}
+      key={t.id}
+      className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between gap-3 relative overflow-hidden hover:border-slate-700 transition"
+    >
+      <div className="flex justify-between items-start gap-3">
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${t.type === "income" ? "bg-emerald-400" : "bg-rose-500"}`}
+          />
+          <div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-bold text-white font-sans">{t.category}</span>
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                {t.subCategory || "General"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+             {t.description && <p className="text-2xs text-slate-400 leading-relaxed">{t.description}</p>}
+             {t.paymentMethod && (
+               <span className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono border border-slate-700">
+                 {t.paymentMethod}
+               </span>
+             )}
+           </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-end gap-1">
+          <span className={`text-sm font-bold font-mono ${t.type === "income" ? "text-emerald-450 font-black" : "text-rose-400"}`}>
+            {t.type === "income" ? "+" : "-"} ₹ {t.amount.toLocaleString()}
+          </span>
+          <span className="text-[10px] text-slate-500 font-mono">{t.date}{t.time ? " · " + t.time : ""}</span>
+        </div>
+      </div>
+
+      {/* Inline visual showing loaded media clips */}
+      {t.attachments && t.attachments.length > 0 && (
+        <div className="flex gap-2 items-center flex-wrap pt-2 border-t border-slate-800/60">
+          {t.attachments.map((at, i) => (
+            <div key={i} className="flex items-center gap-1">
+              {at.type.startsWith("image/") ? (
+                <img
+                  src={at.url}
+                  alt="Attachment"
+                  referrerPolicy="no-referrer"
+                  className="w-12 h-12 object-cover rounded border border-slate-700 hover:scale-105 transition cursor-pointer"
+                  onClick={() => setActiveAttachment(at)}
+                  title="Click to view photo"
+                />
+              ) : at.type.startsWith("audio/") ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveAttachment(at)}
+                  className="flex items-center gap-1 text-[10px] text-amber-400 bg-slate-800 px-2.5 py-1 rounded cursor-pointer hover:bg-slate-750 transition font-mono border border-slate-700"
+                  title="Click to play voice note"
+                >
+                  <Mic className="w-3.5 h-3.5 text-amber-400" /> Play Audio
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveAttachment(at)}
+                  className="flex items-center gap-1 text-[10px] text-cyan-400 bg-slate-800 px-2.5 py-1 rounded cursor-pointer hover:bg-slate-750 transition font-mono border border-slate-700"
+                  title="Click to view document"
+                >
+                  <FileText className="w-3.5 h-3.5 text-cyan-400" /> View Doc
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Edit History view */}
+      {t.editHistory && t.editHistory.length > 0 && (
+        <div className="mt-2 bg-slate-900/55 p-2 rounded-lg text-[9px] font-mono text-slate-400 space-y-1">
+          <div className="flex items-center gap-1 text-slate-300 font-sans font-bold">
+            <Clock className="w-3 h-3 text-cyan-400" />
+            Edit History Logging:
+          </div>
+          {t.editHistory.map((hist, idx) => (
+            <div key={idx} className="border-l border-cyan-500/30 pl-1.5 py-0.5">
+              <span>{new Date(hist.timestamp).toLocaleDateString()}:</span>
+              <span className="text-white ml-1">"{hist.reason}"</span>
+              <span className="text-slate-500 ml-1">(Previous value: Rs. {hist.previousData?.amount})</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action tags bottom border */}
+      <div className="flex justify-between items-center pt-2 border-t border-slate-800/40">
+        <div className="flex gap-1.5 flex-wrap">
+          {t.tags?.map((tag, idx) => (
+            <span key={idx} className="text-[10px] text-cyan-300/80 bg-cyan-950/40 border border-cyan-800/30 px-1.5 py-0.5 rounded-full font-mono">
+              #{tag}
+            </span>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          {listMode === "active" ? (
+            <>
+              <button
+                onClick={() => handleEditClick(t)}
+                className="text-slate-400 hover:text-cyan-400 transition cursor-pointer"
+                title="Edit Transaction"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleDeleteClick(t.id)}
+                className="text-slate-400 hover:text-rose-455 transition cursor-pointer"
+                title="Soft Delete"
+              >
+                <Trash className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => handleRestoreTransaction(t.id)}
+                className="text-slate-400 hover:text-emerald-450 transition cursor-pointer"
+                title="Restore Transaction"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handlePermanentDeleteTransaction(t.id)}
+                className="text-slate-400 hover:text-rose-500 transition cursor-pointer"
+                title="Permanently Delete"
+              >
+                <Trash className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   // Filter & Search Log
   const sourceList = listMode === "active" ? activeTransactions : archivedTransactions;
@@ -1605,160 +1780,53 @@ export default function IncomeExpenseTab() {
           </div>
 
           {/* List display */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 select-none pr-1 align-start items-start content-start">
-            {loading ? (
-              <div className="text-center font-mono py-12 text-xs text-slate-400 animate-pulse">
-                Synchronizing Ledger logs...
-              </div>
-            ) : filteredList.length === 0 ? (
-              <div className="bg-slate-900 p-12 text-center rounded-2xl border border-slate-800 text-xs text-slate-400 font-mono">
-                No transactions match active filter configurations.
-              </div>
-            ) : (
-              filteredList.map((t) => (
-                <div
-                  id={`trans-${t.id}`}
-                  key={t.id}
-                  className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between gap-3 relative overflow-hidden hover:border-slate-700 transition"
-                >
-                  <div className="flex justify-between items-start gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={`w-2.5 h-2.5 rounded-full ${t.type === "income" ? "bg-emerald-400" : "bg-rose-500"}`}
-                      />
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-bold text-white font-sans">{t.category}</span>
-                          <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
-                            {t.subCategory || "General"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                         {t.description && <p className="text-2xs text-slate-400 leading-relaxed">{t.description}</p>}
-                         {t.paymentMethod && (
-                           <span className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono border border-slate-700">
-                             {t.paymentMethod}
-                           </span>
-                         )}
-                       </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      <span className={`text-sm font-bold font-mono ${t.type === "income" ? "text-emerald-400" : "text-rose-400"}`}>
-                        {t.type === "income" ? "+" : "-"} ₹ {t.amount.toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">{t.date}{t.time ? " · " + t.time : ""}</span>
-                    </div>
+          {loading ? (
+            <div className="text-center font-mono py-12 text-xs text-slate-400 animate-pulse">
+              Synchronizing Ledger logs...
+            </div>
+          ) : filteredList.length === 0 ? (
+            <div className="bg-slate-900 p-12 text-center rounded-2xl border border-slate-800 text-xs text-slate-400 font-mono">
+              No transactions match active filter configurations.
+            </div>
+          ) : listMode === "active" ? (
+            /* Split layout: left side expenses, right side income */
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              {/* Left Column: Expenses */}
+              <div className="space-y-3.5">
+                <h4 className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+                  <span className="w-2 h-2 bg-rose-500 rounded-full" />
+                  Expenses Detail
+                </h4>
+                {filteredList.filter((t) => t.type === "expense").length === 0 ? (
+                  <div className="bg-slate-900/50 p-6 text-center rounded-xl border border-slate-850 text-2xs text-slate-505 font-mono">
+                    No expenses recorded under current filters.
                   </div>
+                ) : (
+                  filteredList.filter((t) => t.type === "expense").map(renderTransactionCard)
+                )}
+              </div>
 
-                  {/* Inline visual showing loaded media clips */}
-                  {t.attachments && t.attachments.length > 0 && (
-                    <div className="flex gap-2 items-center flex-wrap pt-2 border-t border-slate-800/60">
-                      {t.attachments.map((at, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          {at.type.startsWith("image/") ? (
-                            <img
-                              src={at.url}
-                              alt="Attachment"
-                              referrerPolicy="no-referrer"
-                              className="w-12 h-12 object-cover rounded border border-slate-700 hover:scale-105 transition cursor-pointer"
-                              onClick={() => setActiveAttachment(at)}
-                              title="Click to view photo"
-                            />
-                          ) : at.type.startsWith("audio/") ? (
-                            <button
-                              type="button"
-                              onClick={() => setActiveAttachment(at)}
-                              className="flex items-center gap-1 text-[10px] text-amber-400 bg-slate-800 px-2.5 py-1 rounded cursor-pointer hover:bg-slate-750 transition font-mono border border-slate-700"
-                              title="Click to play voice note"
-                            >
-                              <Mic className="w-3 h-3 text-amber-400" /> Play Audio
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setActiveAttachment(at)}
-                              className="flex items-center gap-1 text-[10px] text-cyan-400 bg-slate-800 px-2.5 py-1 rounded cursor-pointer hover:bg-slate-750 transition font-mono border border-slate-700"
-                              title="Click to view document"
-                            >
-                              <FileText className="w-3 h-3 text-cyan-400" /> View Doc
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Edit History view */}
-                  {t.editHistory && t.editHistory.length > 0 && (
-                    <div className="mt-2 bg-slate-900/55 p-2 rounded-lg text-[9px] font-mono text-slate-400 space-y-1">
-                      <div className="flex items-center gap-1 text-slate-300 font-sans font-bold">
-                        <Clock className="w-3 h-3 text-cyan-400" />
-                        Edit History Logging:
-                      </div>
-                      {t.editHistory.map((hist, idx) => (
-                        <div key={idx} className="border-l border-cyan-500/30 pl-1.5 py-0.5">
-                          <span>{new Date(hist.timestamp).toLocaleDateString()}:</span>
-                          <span className="text-white ml-1">"{hist.reason}"</span>
-                          <span className="text-slate-500 ml-1">(Previous value: Rs. {hist.previousData?.amount})</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Action tags bottom border */}
-                  <div className="flex justify-between items-center pt-2 border-t border-slate-800/40">
-                    <div className="flex gap-1.5 flex-wrap">
-                      {t.tags?.map((tag, idx) => (
-                        <span key={idx} className="text-[10px] text-cyan-300/80 bg-cyan-950/40 border border-cyan-800/30 px-1.5 py-0.5 rounded-full font-mono">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="flex gap-2">
-                      {listMode === "active" ? (
-                        <>
-                          <button
-                            onClick={() => handleEditClick(t)}
-                            className="text-slate-400 hover:text-cyan-400 transition cursor-pointer"
-                            title="Edit Transaction"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteClick(t.id)}
-                            className="text-slate-400 hover:text-rose-400 transition cursor-pointer"
-                            title="Soft Delete"
-                          >
-                            <Trash className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => handleRestoreTransaction(t.id)}
-                            className="text-slate-400 hover:text-emerald-400 transition cursor-pointer"
-                            title="Restore Transaction"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handlePermanentDeleteTransaction(t.id)}
-                            className="text-slate-400 hover:text-rose-500 transition cursor-pointer"
-                            title="Permanently Delete"
-                          >
-                            <Trash className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
+              {/* Right Column: Income */}
+              <div className="space-y-3.5">
+                <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 font-mono">
+                  <span className="w-2 h-2 bg-emerald-450 rounded-full" />
+                  Income Detail
+                </h4>
+                {filteredList.filter((t) => t.type === "income").length === 0 ? (
+                  <div className="bg-slate-900/50 p-6 text-center rounded-xl border border-slate-850 text-2xs text-slate-505 font-mono">
+                    No income recorded under current filters.
                   </div>
-                </div>
-              ))
-            )}
-          </div>
+                ) : (
+                  filteredList.filter((t) => t.type === "income").map(renderTransactionCard)
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Archive simple grid layout */
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 pr-1 items-start">
+              {filteredList.map(renderTransactionCard)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1907,6 +1975,19 @@ export default function IncomeExpenseTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {cropImageSrc && (
+        <ImageCropperModal
+          imageSrc={cropImageSrc}
+          imageName={cropImageName}
+          onCrop={handleCroppedImage}
+          onCancel={() => setCropImageSrc("")}
+          onRetake={() => {
+            setCropImageSrc("");
+            triggerCamera();
+          }}
+        />
       )}
 
     </div>

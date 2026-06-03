@@ -78,3 +78,12 @@ export async function testConnection() {
     }
   }
 }
+
+export function getApiUrl(path: string): string {
+  const isLocal = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.startsWith('192.168.')
+  );
+  return isLocal ? path : `https://ik-backend-crg8.onrender.com${path}`;
+}

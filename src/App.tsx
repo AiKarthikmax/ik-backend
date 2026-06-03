@@ -11,12 +11,13 @@ import TempLoanTab from "./components/TempLoanTab";
 import FormalLoanTab from "./components/FormalLoanTab";
 import ReportsTab from "./components/ReportsTab";
 import TradingTab from "./components/TradingTab";
+import SmartVisionBoardTab from "./components/SmartVisionBoardTab";
 
 import {
   Wallet, CheckCircle, BookOpen, Sparkles, TrendingDown,
   Users, Building2, FileBarChart2, Settings, Wifi, WifiOff,
   LogOut, Fingerprint, X, Shield, ToggleLeft, ToggleRight,
-  Sun, Moon, Plus, TrendingUp
+  Sun, Moon, Plus, TrendingUp, Target
 } from "lucide-react";
 import { doc, setDoc, getDoc, addDoc, collection } from "firebase/firestore";
 import { db } from "./firebase";
@@ -28,6 +29,7 @@ const navigationItems = [
   { id: "habits",       label: "Habits",     shortLabel: "Habits",   icon: CheckCircle,  comp: HabitTab },
   { id: "journal",      label: "Journal",    shortLabel: "Journal",  icon: BookOpen,     comp: JournalTab },
   { id: "spiritual",    label: "Spiritual",  shortLabel: "Spirit",   icon: Sparkles,     comp: SpiritualTab },
+  { id: "visionBoard",  label: "Smart Vision Board", shortLabel: "Vision", icon: Target, comp: SmartVisionBoardTab },
   { id: "loans",        label: "Thavanais",  shortLabel: "EMIs",     icon: TrendingDown, comp: ThavanaiTab },
   { id: "tempLoans",    label: "Friends",    shortLabel: "Friends",  icon: Users,        comp: TempLoanTab },
   { id: "formalLoans",  label: "Bank Loans", shortLabel: "Loans",    icon: Building2,    comp: FormalLoanTab },
@@ -300,6 +302,7 @@ function AppContent() {
           {activeTab === "habits"       && <HabitTab />}
           {activeTab === "journal"      && <JournalTab />}
           {activeTab === "spiritual"    && <SpiritualTab />}
+          {activeTab === "visionBoard"  && <SmartVisionBoardTab />}
           {activeTab === "loans"        && <ThavanaiTab />}
           {activeTab === "tempLoans"    && <TempLoanTab />}
           {activeTab === "formalLoans"  && <FormalLoanTab />}

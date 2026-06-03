@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useRef } from "react";
-import { db } from "../firebase";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { db, getApiUrl } from "../firebase";
 import { collection, addDoc, getDocs, doc, setDoc, getDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { handleFileUpload } from "../attachmentHelper";
+import AdvancedDashboardTab from "./AdvancedDashboardTab";
 import {
   TrendingUp, TrendingDown, Target, ShieldAlert, DollarSign,
   LineChart, Plus, Trash2, Image, Upload, Activity, FileText,
   CheckSquare, RefreshCw, Play, Key, Users, Info, Sparkles,
   Smile, Frown, X, ChevronRight, Check, AlertTriangle, Brain, Sparkle, Award,
-  Globe, Clock, Flame, Zap, BookOpen
+  Globe, Clock, Flame, Zap, BookOpen, AlertCircle, Compass
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -198,9 +199,192 @@ const getOptionsChain = (spot: number) => {
   return { strikes, pcr, maxPain };
 };
 
+const HOLIDAYS_2026 = [
+  { date: "2026-01-26", name: "Republic Day" },
+  { date: "2026-02-15", name: "Mahashivratri" },
+  { date: "2026-03-03", name: "Holi" },
+  { date: "2026-03-20", name: "Ramzan Id (Id-Ul-Fitr)" },
+  { date: "2026-04-03", name: "Good Friday" },
+  { date: "2026-04-14", name: "Dr. Ambedkar Jayanti" },
+  { date: "2026-05-01", name: "Maharashtra Day" },
+  { date: "2026-05-28", name: "Bakri Id (Id-Ul-Zuha)" },
+  { date: "2026-07-16", name: "Muharram" },
+  { date: "2026-08-15", name: "Independence Day" },
+  { date: "2026-09-05", name: "Id-E-Milad" },
+  { date: "2026-09-15", name: "Ganesh Chaturthi" },
+  { date: "2026-10-02", name: "Mahatma Gandhi Jayanti" },
+  { date: "2026-10-20", name: "Dussehra" },
+  { date: "2026-11-08", name: "Diwali (Laxmi Puja)" },
+  { date: "2026-11-24", name: "Guru Nanak Jayanti" },
+  { date: "2026-12-25", name: "Christmas" }
+];
+
+const globalMarkets = [
+  { name: "NSE / BSE (India)", startHour: 9, startMin: 15, endHour: 15, endMin: 30, isIndian: true, hoursStr: "09:15 AM - 03:30 PM" },
+  { name: "NYSE / NASDAQ (US)", startHour: 19, startMin: 0, endHour: 1, endMin: 30, hoursStr: "07:00 PM - 01:30 AM" },
+  { name: "London Stock Exchange (UK)", startHour: 13, startMin: 30, endHour: 22, endMin: 0, hoursStr: "01:30 PM - 10:00 PM" },
+  { name: "Tokyo Stock Exchange (Japan)", startHour: 5, startMin: 30, endHour: 11, endMin: 30, hoursStr: "05:30 AM - 11:30 AM" },
+  { name: "Hong Kong Exchange (HKEX)", startHour: 6, startMin: 30, endHour: 12, endMin: 30, hoursStr: "06:30 AM - 12:30 PM" }
+];
+
+const getTradingLocalDateString = (d: Date = new Date()) => {
+  const offset = d.getTimezoneOffset();
+  const localDate = new Date(d.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split("T")[0];
+};
+
+const getKolkataTimeInfo = (date: Date) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    weekday: "long",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour12: false
+  }).formatToParts(date);
+  
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value || "";
+  
+  return {
+    weekday: getPart("weekday"),
+    hour: parseInt(getPart("hour"), 10) % 24,
+    minute: parseInt(getPart("minute"), 10),
+    second: parseInt(getPart("second"), 10),
+    year: parseInt(getPart("year"), 10),
+    month: parseInt(getPart("month"), 10),
+    day: parseInt(getPart("day"), 10),
+  };
+};
+
+function isHoliday(date: Date): boolean {
+  const info = getKolkataTimeInfo(date);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const dateStr = `${info.year}-${pad(info.month)}-${pad(info.day)}`;
+  return HOLIDAYS_2026.some(h => h.date === dateStr);
+}
+
+function isWeekend(date: Date): boolean {
+  const info = getKolkataTimeInfo(date);
+  return info.weekday === "Saturday" || info.weekday === "Sunday";
+}
+
+function getNextOpenSession(now: Date): Date {
+  const next = new Date(now.getTime());
+  
+  for (let i = 0; i < 30; i++) {
+    const info = getKolkataTimeInfo(next);
+    const year = info.year;
+    const month = String(info.month).padStart(2, "0");
+    const day = String(info.day).padStart(2, "0");
+    const targetOpenUTC = new Date(`${year}-${month}-${day}T03:45:00.000Z`);
+    
+    if (targetOpenUTC.getTime() > now.getTime()) {
+      if (!isWeekend(targetOpenUTC) && !isHoliday(targetOpenUTC)) {
+        return targetOpenUTC;
+      }
+    }
+    next.setDate(next.getDate() + 1);
+  }
+  return new Date(now.getTime() + 24 * 60 * 60 * 1000);
+}
+
+function getSessionCloseTime(now: Date): Date {
+  const info = getKolkataTimeInfo(now);
+  const year = info.year;
+  const month = String(info.month).padStart(2, "0");
+  const day = String(info.day).padStart(2, "0");
+  return new Date(`${year}-${month}-${day}T10:00:00.000Z`);
+}
+
 export default function TradingTab() {
-  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "journal" | "rules" | "brokers" | "live_feed">("dashboard");
+  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "journal" | "rules" | "brokers" | "live_feed" | "advanced_dashboard">("dashboard");
   const [trades, setTrades] = useState<Trade[]>([]);
+
+  const checkHolidayStatus = () => {
+    const now = new Date();
+    const todayStr = getTradingLocalDateString(now);
+    const todayHoliday = HOLIDAYS_2026.find(h => h.date === todayStr);
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const tomorrowStr = getTradingLocalDateString(tomorrow);
+    const tomorrowHoliday = HOLIDAYS_2026.find(h => h.date === tomorrowStr);
+
+    return {
+      today: todayHoliday,
+      tomorrow: tomorrowHoliday
+    };
+  };
+
+  const getMarketTimeStatus = (market: typeof globalMarkets[0]) => {
+    const now = new Date();
+    const options = { timeZone: "Asia/Kolkata", hour12: false, hour: '2-digit', minute: '2-digit' } as const;
+    const timeStr = now.toLocaleTimeString("en-IN", options);
+    const [h, m] = timeStr.split(":").map(Number);
+    const minutes = h * 60 + m;
+
+    const startMinutes = market.startHour * 60 + market.startMin;
+    const endMinutes = market.endHour * 60 + market.endMin;
+
+    const weekend = isWeekend(now);
+
+    if (market.isIndian) {
+      const holiday = isHoliday(now);
+      if (weekend || holiday) {
+        return {
+          status: "CLOSED" as const,
+          reason: holiday ? "Holiday" : "Weekend",
+          badgeColor: "bg-rose-500/10 text-rose-455 border border-rose-500/20"
+        };
+      }
+    } else {
+      if (weekend) {
+        return {
+          status: "CLOSED" as const,
+          reason: "Weekend",
+          badgeColor: "bg-rose-500/10 text-rose-455 border border-rose-500/20"
+        };
+      }
+    }
+
+    let isOpen = false;
+    if (endMinutes < startMinutes) {
+      isOpen = minutes >= startMinutes || minutes < endMinutes;
+    } else {
+      isOpen = minutes >= startMinutes && minutes < endMinutes;
+    }
+
+    if (isOpen) {
+      return {
+        status: "OPEN" as const,
+        reason: "Trading Active",
+        badgeColor: "bg-emerald-500/10 text-emerald-450 border border-emerald-500/20"
+      };
+    }
+
+    const preMarketStart = startMinutes - 15;
+    let isPreMarket = false;
+    if (minutes >= preMarketStart && minutes < startMinutes) {
+      isPreMarket = true;
+    }
+
+    if (isPreMarket) {
+      return {
+        status: "PRE-MARKET" as const,
+        reason: "Pre-Opening",
+        badgeColor: "bg-amber-500/10 text-amber-450 border border-amber-500/20"
+      };
+    }
+
+    return {
+      status: "CLOSED" as const,
+      reason: "Closed",
+      badgeColor: "bg-slate-500/10 text-slate-400 border border-slate-550/20"
+    };
+  };
 
   // Real-time Stock Market Dashboard States
   const [marketData, setMarketData] = useState<any>(null);
@@ -208,7 +392,62 @@ export default function TradingTab() {
   const [fiiDii, setFiiDii] = useState<any[]>([]);
   const [pollInterval, setPollInterval] = useState<number>(5000); // 5s, 15s, 30s
   const [istTime, setIstTime] = useState<string>("");
-  const [marketStatus, setMarketStatus] = useState<"PRE-MARKET" | "OPEN" | "CLOSED">("CLOSED");
+  const [marketStatus, setMarketStatus] = useState<"PRE-MARKET" | "OPEN" | "CLOSED" | "HOLIDAY">("CLOSED");
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+
+  const marketSessionInfo = useMemo(() => {
+    const info = getKolkataTimeInfo(currentTime);
+    const totalMinutes = info.hour * 60 + info.minute;
+
+    const weekend = isWeekend(currentTime);
+    const holiday = isHoliday(currentTime);
+
+    let status: "OPEN" | "PRE-MARKET" | "CLOSED" | "HOLIDAY" = "CLOSED";
+    let countdownLabel = "";
+    let targetTime = new Date();
+
+    if (weekend) {
+      status = "CLOSED";
+      countdownLabel = "Next Session Open";
+      targetTime = getNextOpenSession(currentTime);
+    } else if (holiday) {
+      status = "HOLIDAY";
+      countdownLabel = "Next Session Open";
+      targetTime = getNextOpenSession(currentTime);
+    } else {
+      if (totalMinutes >= 540 && totalMinutes < 555) { // 9:00 AM - 9:15 AM
+        status = "PRE-MARKET";
+        countdownLabel = "Market Opens In";
+        targetTime = getNextOpenSession(currentTime);
+      } else if (totalMinutes >= 555 && totalMinutes < 930) { // 9:15 AM - 3:30 PM
+        status = "OPEN";
+        countdownLabel = "Market Closes In";
+        targetTime = getSessionCloseTime(currentTime);
+      } else {
+        status = "CLOSED";
+        countdownLabel = "Next Session Open";
+        targetTime = getNextOpenSession(currentTime);
+      }
+    }
+
+    const diffMs = targetTime.getTime() - currentTime.getTime();
+    let timerStr = "00:00:00";
+    if (diffMs > 0) {
+      const diffSecs = Math.floor(diffMs / 1000);
+      const h = Math.floor(diffSecs / 3600);
+      const m = Math.floor((diffSecs % 3600) / 60);
+      const s = diffSecs % 60;
+      
+      const pad = (num: number) => String(num).padStart(2, "0");
+      timerStr = `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    return { status, countdownLabel, timerStr };
+  }, [currentTime]);
+
+  useEffect(() => {
+    setMarketStatus(marketSessionInfo.status);
+  }, [marketSessionInfo.status]);
   const [expandedIndices, setExpandedIndices] = useState<{ [key: string]: boolean }>({});
   const [selectedSector, setSelectedSector] = useState<any>(null);
   const [aiSummary, setAiSummary] = useState<string>("");
@@ -351,11 +590,11 @@ export default function TradingTab() {
     if (optionUnderlying === "NIFTY") {
       setLotSizeVal("65");
     } else if (optionUnderlying === "SENSEX") {
-      setLotSizeVal("10");
+      setLotSizeVal("20");
     } else if (optionUnderlying === "BANKNIFTY") {
-      setLotSizeVal("15");
+      setLotSizeVal("30");
     } else if (optionUnderlying === "BANKEX") {
-      setLotSizeVal("15");
+      setLotSizeVal("30");
     }
   }, [optionUnderlying]);
 
@@ -530,7 +769,7 @@ export default function TradingTab() {
   const getPreMarketAiPrediction = async () => {
     setFetchingPreMarket(true);
     try {
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
+      const res = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -556,7 +795,7 @@ export default function TradingTab() {
   const getLiveMoveAiSuggestion = async () => {
     setFetchingLiveMove(true);
     try {
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
+      const res = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -589,7 +828,7 @@ export default function TradingTab() {
     if (!targetEvent) return;
 
     try {
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
+      const res = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -800,23 +1039,7 @@ export default function TradingTab() {
       const options = { timeZone: "Asia/Kolkata", hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' } as const;
       const timeStr = now.toLocaleTimeString("en-IN", options);
       setIstTime(timeStr);
-
-      // Determine market status based on IST hour & minute
-      const [h, m] = timeStr.split(":").map(Number);
-      const isWeekend = now.getDay() === 0 || now.getDay() === 6;
-      
-      if (isWeekend) {
-        setMarketStatus("CLOSED");
-      } else {
-        const minutes = h * 60 + m;
-        if (minutes >= 9 * 60 && minutes < 9 * 60 + 15) {
-          setMarketStatus("PRE-MARKET");
-        } else if (minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30) {
-          setMarketStatus("OPEN");
-        } else {
-          setMarketStatus("CLOSED");
-        }
-      }
+      setCurrentTime(now);
     }, 1000);
 
     return () => clearInterval(clockInterval);
@@ -826,7 +1049,7 @@ export default function TradingTab() {
     if (!currentMarketData) return;
     setFetchingAiSummary(true);
     try {
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
+      const res = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -863,83 +1086,11 @@ export default function TradingTab() {
 
   const fetchAllMarketData = async () => {
     try {
-      let gData: any = null;
-      try {
-        const gRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/global");
-        const text = await gRes.text();
-        gData = JSON.parse(text);
-      } catch (err) {
-        // Fallback for Firebase hosting or absent backend
-        const symbols = {
-          nifty: '^NSEI', sensex: '^BSESN', banknifty: '^NSEBANK',
-          usdinr: 'INR=X', gold: 'GC=F', silver: 'SI=F',
-          crude_brent: 'BZ=F', vix: '^VIX', dow: '^DJI', nikkei: '^N225'
-        };
-        const defaultValues: any = {
-          nifty: { price: 22146.50, change: 148.20, pct: 0.67, high: 22180.20, low: 22080.55, positive: true },
-          sensex: { price: 72832.10, change: 452.80, pct: 0.63, high: 72950.00, low: 72600.00, positive: true },
-          banknifty: { price: 46911.80, change: -124.50, pct: -0.26, high: 47100.00, low: 46750.00, positive: false },
-          usdinr: { price: 83.28, change: 0.02, pct: 0.02, positive: true },
-          gold: { price: 2350.40, change: 12.50, pct: 0.62, positive: true },
-          silver: { price: 28.85, change: 0.15, pct: 0.66, positive: true },
-          crude_brent: { price: 81.62, change: -0.45, pct: -0.55, positive: false },
-          vix: { price: 14.22, change: -0.85, pct: -5.64, positive: false },
-          dow: { price: 39069.23, change: 184.84, pct: 0.48, positive: true },
-          nikkei: { price: 39098.68, change: 275.87, pct: 0.71, positive: true }
-        };
-
-        gData = {};
-        await Promise.all(Object.entries(symbols).map(async ([key, symbol]) => {
-          let success = false;
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`;
-          // Try multiple proxies silently to avoid UI breakage
-          const proxies = [
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-            `https://corsproxy.io/?url=${encodeURIComponent(url)}`
-          ];
-          
-          for (const proxyUrl of proxies) {
-            try {
-              const res = await fetch(proxyUrl, { mode: 'cors' });
-              if (res.ok) {
-                const j = await res.json();
-                const meta = j.chart.result[0].meta;
-                const price = meta.regularMarketPrice;
-                const prevClose = meta.previousClose || meta.chartPreviousClose || price;
-                const change = price - prevClose;
-                const pct = prevClose ? (change / prevClose) * 100 : 0;
-                gData[key] = {
-                  price: Number(price.toFixed(2)),
-                  change: Number(change.toFixed(2)),
-                  pct: Number(pct.toFixed(2)),
-                  high: Number((meta.regularMarketDayHigh || price).toFixed(2)),
-                  low: Number((meta.regularMarketDayLow || price).toFixed(2)),
-                  positive: change >= 0
-                };
-                success = true;
-                break; // Exit proxy loop on success
-              }
-            } catch(e) {
-              // Silently ignore individual proxy failures
-            }
-          }
-          
-          if (!success) {
-            // Hard fallback to defaults if all proxies fail (prevents UI crash)
-            gData[key] = defaultValues[key];
-          }
-        }));
-        
-        // Mock giftnifty if absent
-        if (gData.nifty) {
-           gData.giftnifty = {
-             price: Number((gData.nifty.price + 22.50).toFixed(2)),
-             change: Number((gData.nifty.change + 15.20).toFixed(2)),
-             pct: gData.nifty.pct,
-             positive: gData.nifty.change >= 0
-           };
-        }
+      const gRes = await fetch(getApiUrl("/api/market/global"));
+      if (!gRes.ok) {
+        throw new Error(`HTTP ${gRes.status}`);
       }
+      const gData = await gRes.json();
       
       if (gData) {
         setMarketData(gData);
@@ -962,18 +1113,29 @@ export default function TradingTab() {
         setGiftNiftyHistory(prev => [...prev, giftPrice].slice(-20));
       }
 
+      const now = new Date();
+      const isMarketOpenState = !isWeekend(now) && !isHoliday(now) && (() => {
+        const timeStr = now.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false, hour: '2-digit', minute: '2-digit' });
+        const [h, m] = timeStr.split(":").map(Number);
+        const minutes = h * 60 + m;
+        return minutes >= 9 * 60 && minutes < 15 * 60 + 30; // 9:00 AM - 3:30 PM (pre-market and open)
+      })();
+
       // Update sector changes based on actual market data
       setSectors(prevSectors => prevSectors.map(sec => {
         let codePrice = gData[sec.code];
         let pct = sec.change;
         if (codePrice) {
           pct = codePrice.pct;
-        } else {
+        } else if (isMarketOpenState) {
           pct = Number(((gData?.nifty?.pct ?? 0) * (0.8 + Math.random() * 0.4)).toFixed(2));
         }
 
         // Update stocks inside the sector
         const updatedStocks = sec.stocks.map((stk: any) => {
+          if (!isMarketOpenState) {
+            return stk;
+          }
           const dev = (Math.random() - 0.5) * 0.15;
           const stockChange = Number((pct + dev).toFixed(2));
           const base = stk.price / (1 + stk.change / 100);
@@ -1000,7 +1162,7 @@ export default function TradingTab() {
   const fetchNewsAndFiiDii = async () => {
     try {
       try {
-        const nRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/news");
+        const nRes = await fetch(getApiUrl("/api/market/news"));
         const nText = await nRes.text();
         const nData = JSON.parse(nText);
         setNews(nData);
@@ -1010,7 +1172,7 @@ export default function TradingTab() {
       }
 
       try {
-        const fRes = await fetch("https://ik-backend-crg8.onrender.com/api/market/fii-dii");
+        const fRes = await fetch(getApiUrl("/api/market/fii-dii"));
         const fText = await fRes.text();
         const fData = JSON.parse(fText);
         setFiiDii(fData);
@@ -1025,7 +1187,7 @@ export default function TradingTab() {
 
   const fetchEvents = async () => {
     try {
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/market/events");
+      const res = await fetch(getApiUrl("/api/market/events"));
       const text = await res.text();
       const data = JSON.parse(text);
       if (Array.isArray(data) && data.length > 0) {
@@ -1327,7 +1489,7 @@ export default function TradingTab() {
       const emotions = tradesList.map(t => t.mindsetBefore);
       const exitReasons = tradesList.map(t => t.exitReason);
       
-      const res = await fetch("https://ik-backend-crg8.onrender.com/api/ai", {
+      const res = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1709,7 +1871,7 @@ export default function TradingTab() {
         await new Promise(r => setTimeout(r, 600));
         logger(`Fetching trades from ${syncFromDate} to ${syncToDate}...`);
 
-        const response = await fetch("https://ik-backend-crg8.onrender.com/api/broker/sync/dhan", {
+        const response = await fetch(getApiUrl("/api/broker/sync/dhan"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -1772,7 +1934,7 @@ export default function TradingTab() {
         logger(`Sync process summary: ${importedCount} trades imported, ${skippedCount} duplicates skipped.`);
         
         // Update local configuration connected state
-        const nextConf = { ...config, connected: true };
+        const nextConf = { ...dhanConfig, connected: true };
         setDhanConfig(nextConf);
         saveBrokerConfig("dhan", nextConf);
 
@@ -1983,9 +2145,36 @@ export default function TradingTab() {
         const options = { timeZone: "Asia/Kolkata", hour12: false, hour: '2-digit', minute: '2-digit' } as const;
         const timeStr = now.toLocaleTimeString("en-IN", options);
         const [h, m] = timeStr.split(":").map(Number);
-        const totalMinutes = h * 60 + m;
-
         const alerts = [];
+        const todayStr = getTradingLocalDateString(now);
+        const totalMinutes = h * 60 + m;
+        const todayHoliday = checkHolidayStatus().today;
+        const tomorrowHoliday = checkHolidayStatus().tomorrow;
+
+        if (todayHoliday) {
+          alerts.push({
+            type: "holiday",
+            msg: `🚨 TODAY HOLIDAY: Indian Markets (NSE/BSE) are closed today because of ${todayHoliday.name}.`
+          });
+        }
+        if (tomorrowHoliday) {
+          alerts.push({
+            type: "holiday",
+            msg: `⚠️ TOMORROW HOLIDAY: Indian Markets (NSE/BSE) will be closed tomorrow because of ${tomorrowHoliday.name}.`
+          });
+        }
+
+        if (!todayHoliday && !tomorrowHoliday) {
+          const nextHoliday = HOLIDAYS_2026
+            .filter(h => h.date > todayStr)
+            .sort((a, b) => a.date.localeCompare(b.date))[0];
+          if (nextHoliday) {
+            alerts.push({
+              type: "info",
+              msg: `🗓️ Next NSE/BSE Holiday: ${nextHoliday.name} on ${new Date(nextHoliday.date).toLocaleDateString("en-IN", { day: '2-digit', month: 'short' })}.`
+            });
+          }
+        }
 
         // Europe Opening: 13:30 IST (1:30 PM)
         const europeOpenMin = 13 * 60 + 30; 
@@ -2045,9 +2234,19 @@ export default function TradingTab() {
                       ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
                       : al.type === "active"
                         ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
-                        : "bg-slate-950 border-slate-850 text-slate-500"
+                        : al.type === "holiday"
+                          ? "bg-rose-500/10 border-rose-500/30 text-rose-400 font-bold animate-pulse"
+                          : "bg-slate-950 border-slate-850 text-slate-400"
                   }`}>
-                    <Clock className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${al.type === "warning" ? "animate-pulse text-amber-400" : al.type === "active" ? "text-emerald-400" : "text-slate-500"}`} />
+                    <Clock className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                      al.type === "warning" 
+                        ? "animate-pulse text-amber-400" 
+                        : al.type === "active" 
+                          ? "text-emerald-400" 
+                          : al.type === "holiday"
+                            ? "text-rose-400 animate-bounce"
+                            : "text-slate-500"
+                    }`} />
                     <div>{al.msg}</div>
                   </div>
                 ))}
@@ -2082,10 +2281,28 @@ export default function TradingTab() {
       {/* ─── Header area ────────────────────────────────── */}
       <div className="flex justify-between items-center gap-4 flex-wrap bg-slate-900 p-5 rounded-2xl border border-slate-800">
         <div className="flex-1 min-w-[280px]">
-          <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-            <span className="w-2.5 h-6 bg-indigo-600 rounded-full inline-block" />
-            Trading Management Hub
-          </h2>
+          <div className="flex items-center gap-3.5 flex-wrap">
+            <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+              <span className="w-2.5 h-6 bg-indigo-600 rounded-full inline-block" />
+              Trading Management Hub
+            </h2>
+            
+            {/* NSE Market Status Pill with Timer */}
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-950/80 border border-slate-850 rounded-xl font-mono text-[9px]">
+              <span className="text-slate-500 uppercase font-bold text-[8px]">NSE Status:</span>
+              <span className={`px-1.5 py-0.5 rounded-md font-black text-[7.5px] uppercase ${
+                marketSessionInfo.status === "OPEN" ? "bg-emerald-500/10 text-emerald-450 border border-emerald-500/20" :
+                marketSessionInfo.status === "PRE-MARKET" ? "bg-amber-500/10 text-amber-450 border border-amber-500/20 animate-pulse" :
+                marketSessionInfo.status === "HOLIDAY" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" :
+                "bg-rose-500/10 text-rose-455 border border-rose-500/20"
+              }`}>
+                {marketSessionInfo.status}
+              </span>
+              <span className="text-slate-800">|</span>
+              <span className="text-slate-500 font-bold uppercase text-[8px]">{marketSessionInfo.countdownLabel}:</span>
+              <span className="text-white font-black bg-slate-900 px-1 py-0.5 rounded border border-slate-800 tracking-wider text-[8px]">{marketSessionInfo.timerStr}</span>
+            </div>
+          </div>
           <p className="text-xs text-slate-400 mt-1 font-medium">Record personal trade journals, track emotional bias, and sync broker accounts</p>
         </div>
 
@@ -2227,13 +2444,14 @@ export default function TradingTab() {
         {/* Main Control Panel (Columns 1-3) */}
         <div className="xl:col-span-3 space-y-6">
           {/* Sub Navigation */}
-          <div className="flex gap-1.5 p-1 bg-slate-950 border border-slate-900 rounded-xl w-full max-w-2xl overflow-x-auto">
+          <div className="flex gap-1.5 p-1 bg-slate-950 border border-slate-900 rounded-xl w-full overflow-x-auto">
             {[
               { id: "dashboard", label: "Dashboard", icon: LineChart },
               { id: "live_feed", label: "Live Market Cues", icon: Activity },
               { id: "journal",   label: "Journal Logs", icon: FileText },
               { id: "rules",     label: "Rules System", icon: CheckSquare },
-              { id: "brokers",   label: "Broker Sync", icon: Users }
+              { id: "brokers",   label: "Broker Sync", icon: Users },
+              { id: "advanced_dashboard", label: "Advanced Dashboard", icon: TrendingUp }
             ].map(tab => {
               const Icon = tab.icon;
               const active = activeSubTab === tab.id;
@@ -2327,7 +2545,7 @@ export default function TradingTab() {
                     {trades.length === 0 ? (
                       <div className="h-full flex items-center justify-center text-slate-500">Log trades to display chart</div>
                     ) : (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                         <BarChart data={getPnlChartData()} margin={{ top: 25, right: 10, left: -20, bottom: 0 }}>
                           <XAxis dataKey="name" stroke="#64748b" tickLine={false} axisLine={false} fontSize={9} />
                           <YAxis stroke="#64748b" tickLine={false} axisLine={false} fontSize={9} />
@@ -2367,7 +2585,7 @@ export default function TradingTab() {
                       <div className="text-slate-500">No exit details logged</div>
                     ) : (
                       <>
-                        <ResponsiveContainer width="100%" height="70%">
+                        <ResponsiveContainer width="100%" height="70%" minWidth={0} minHeight={0}>
                           <PieChart>
                             <Pie
                               data={getExitReasonData()}
@@ -2409,6 +2627,26 @@ export default function TradingTab() {
           {activeSubTab === "live_feed" && (
             <div className="space-y-6 animate-fade-in text-left">
               
+              {/* Holiday Alert Banners */}
+              {checkHolidayStatus().today && (
+                <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl flex items-center gap-3 text-rose-200 text-xs shadow-lg animate-pulse">
+                  <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold uppercase tracking-wider text-rose-400 block text-[9px] font-mono">Market Holiday Alert</span>
+                    Indian Markets (NSE/BSE) are CLOSED today due to <span className="font-bold text-white">{checkHolidayStatus().today.name}</span>.
+                  </div>
+                </div>
+              )}
+              {!checkHolidayStatus().today && checkHolidayStatus().tomorrow && (
+                <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl flex items-center gap-3 text-amber-200 text-xs shadow-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold uppercase tracking-wider text-amber-400 block text-[9px] font-mono">Upcoming Holiday Alert</span>
+                    Indian Markets (NSE/BSE) will be CLOSED tomorrow due to <span className="font-bold text-white">{checkHolidayStatus().tomorrow.name}</span>.
+                  </div>
+                </div>
+              )}
+
               {/* Market Time Simulator & Status Header */}
               <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4">
                 <div className="flex justify-between items-center flex-wrap gap-4">
@@ -2417,14 +2655,22 @@ export default function TradingTab() {
                       <Clock className="w-4 h-4 text-indigo-400 animate-pulse" />
                       Live Market Feed controls
                     </h3>
-                    <p className="text-[11px] text-slate-400 mt-1 font-mono">
-                      IST Clock: <span className="text-white font-bold">{istTime}</span> | Status: <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold ${
+                    <p className="text-[11px] text-slate-400 mt-1 font-mono flex items-center gap-2 flex-wrap">
+                      <span>IST Clock: <span className="text-white font-bold">{istTime}</span></span>
+                      <span className="text-slate-700">|</span>
+                      <span>Status: <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase ${
                         marketStatus === "OPEN" 
-                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                          ? "bg-emerald-500/10 text-emerald-450 border border-emerald-500/20" 
                           : marketStatus === "PRE-MARKET"
-                            ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                      }`}>{marketStatus}</span> | Mode: <span className="text-indigo-400 font-bold">{simulatedPhase === "real_time" ? "Live API Gateway" : "Simulated Time-drift"}</span>
+                            ? "bg-amber-500/10 text-amber-450 border border-amber-500/20 animate-pulse"
+                            : marketStatus === "HOLIDAY"
+                              ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                              : "bg-rose-500/10 text-rose-455 border border-rose-500/20"
+                      }`}>{marketStatus}</span></span>
+                      <span className="text-slate-700">|</span>
+                      <span>{marketSessionInfo.countdownLabel}: <span className="text-white font-black bg-slate-950 px-1.5 py-0.5 rounded border border-slate-850 tracking-wider text-[10px]">{marketSessionInfo.timerStr}</span></span>
+                      <span className="text-slate-700">|</span>
+                      <span>Mode: <span className="text-indigo-400 font-bold">{simulatedPhase === "real_time" ? "Live API Gateway" : "Simulated Time-drift"}</span></span>
                     </p>
                   </div>
                   
@@ -2450,6 +2696,46 @@ export default function TradingTab() {
                       </button>
                     ))}
                   </div>
+                </div>
+              </div>
+
+              {/* Global Market Hours Dashboard */}
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 text-left">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
+                      <Compass className="w-4 h-4 text-indigo-400" />
+                      Global Market Hours (IST) & Session Status
+                    </h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Real-time status of major exchanges translated to Indian Standard Time (IST)</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                  {globalMarkets.map((m) => {
+                    const info = getMarketTimeStatus(m);
+                    return (
+                      <div key={m.name} className="bg-slate-950 border border-slate-850 p-3.5 rounded-xl hover:border-indigo-500/20 transition flex flex-col justify-between space-y-2">
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-200 leading-tight font-sans">
+                            {m.name}
+                          </div>
+                          <div className="text-[9px] text-slate-500 font-mono mt-1">
+                            {m.hoursStr}
+                          </div>
+                        </div>
+                        
+                        <div className="pt-2 border-t border-slate-900/60 flex items-center justify-between gap-1">
+                          <span className={`px-2 py-0.5 rounded-lg text-[9px] font-bold font-mono ${info.badgeColor}`}>
+                            {info.status}
+                          </span>
+                          <span className="text-[8px] font-mono text-slate-500 max-w-[80px] text-right truncate" title={info.reason}>
+                            {info.reason}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2753,7 +3039,7 @@ export default function TradingTab() {
                         {/* Sparkline chart */}
                         {giftNiftyHistory.length > 1 && (
                           <div className="h-12 w-full pt-1">
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                               <AreaChart data={giftNiftyHistory.map((val, idx) => ({ idx, val }))}>
                                 <defs>
                                   <linearGradient id="giftGrad" x1="0" y1="0" x2="0" y2="100%">
@@ -2761,7 +3047,7 @@ export default function TradingTab() {
                                     <stop offset="100%" stopColor="#6366f1" stopOpacity={0}/>
                                   </linearGradient>
                                 </defs>
-                                <Area type="monotone" dataKey="val" stroke="#6366f1" strokeWidth={1.5} fill="url(#giftGrad)" domain={['dataMin - 10', 'dataMax + 10']} />
+                                <Area type="monotone" dataKey="val" stroke="#6366f1" strokeWidth={1.5} fill="url(#giftGrad)" />
                               </AreaChart>
                             </ResponsiveContainer>
                           </div>
@@ -2950,7 +3236,7 @@ export default function TradingTab() {
                         {/* Flows chart */}
                         {fiiDii.length > 0 ? (
                           <div className="h-44 w-full font-mono text-[9px] pt-2">
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                               <BarChart data={fiiDii} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
                                 <XAxis dataKey="date" stroke="#64748b" tickLine={false} axisLine={false} />
                                 <YAxis stroke="#64748b" tickLine={false} axisLine={false} />
@@ -3236,7 +3522,7 @@ export default function TradingTab() {
 
                         {/* Call vs Put Open Interest bar chart */}
                         <div className="h-28 w-full font-mono text-[8px] pt-1">
-                          <ResponsiveContainer width="100%" height="100%">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                             <BarChart data={strikes.slice(2, 9)} margin={{ top: 5, right: 0, left: -25, bottom: 0 }}>
                               <XAxis dataKey="strike" stroke="#64748b" tickLine={false} axisLine={false} />
                               <YAxis stroke="#64748b" tickLine={false} axisLine={false} />
@@ -3740,6 +4026,10 @@ export default function TradingTab() {
                 </div>
               )}
             </div>
+          )}
+
+          {activeSubTab === "advanced_dashboard" && (
+            <AdvancedDashboardTab />
           )}
         </div>
 

@@ -36,6 +36,29 @@ export interface HabitLog {
   date: string; // YYYY-MM-DD
   completed: boolean;
   status?: "completed" | "skipped" | "pending";
+  note?: string; // Optional completion note or skip reason
+  completedAt?: string | null;
+  updatedAt?: string;
+  streak?: number;
+}
+
+export interface DailyHabitDetail {
+  status: "completed" | "skipped" | "pending";
+  note?: string;
+  completedAt?: string | null;
+  updatedAt: string;
+  streak: number;
+}
+
+export interface DailySummary {
+  id: string; // YYYY-MM-DD (document ID)
+  mood?: number; // 1-10
+  energy?: number; // 1-10
+  dailyNote?: string;
+  updatedAt: string;
+  habits: {
+    [habitId: string]: DailyHabitDetail;
+  };
 }
 
 export interface JournalEntry {

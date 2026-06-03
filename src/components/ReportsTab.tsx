@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { collection, getDocs, addDoc } from "firebase/firestore";
+import { collection, getDocs, addDoc, doc, setDoc } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase";
-import { Transaction, Habit, HabitLog, JournalEntry, GratitudeLog, Loan, TempLoan, FormalLoan } from "../types";
+import { Transaction, Habit, HabitLog, JournalEntry, GratitudeLog, Loan, TempLoan, FormalLoan, DailySummary } from "../types";
 import { generatePDF } from "../pdfGenerator";
+import { useFirebase } from "./FirebaseProvider";
 import {
   Download, Upload, FileText, Database, RefreshCw,
   Calendar, CalendarDays, TrendingUp, LayoutGrid, Clock
@@ -47,12 +48,50 @@ function getQuickDates(filter: QuickFilter): { start: string; end: string } {
   return { start: "", end: "" }; // custom
 }
 
+const DECOY_ENTRIES: JournalEntry[] = [
+  {
+    id: "decoy-1",
+    date: "2026-05-27",
+    content: "Had a great gym session in the morning. Focus was on compound movements today. Hit a personal record of 120kg on squats for 5 reps. Mind feels extremely clear and energized.",
+    mood: "happy",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  },
+  {
+    id: "decoy-2",
+    date: "2026-05-25",
+    content: "Reflected on the current financial markets today. Decided to sit on cash and wait for a clear setup on the Nifty index. Better to preserve capital than to force trades in a choppy range.",
+    mood: "neutral",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  },
+  {
+    id: "decoy-3",
+    date: "2026-05-24",
+    content: "Feeling a bit exhausted after a long week of meetings. Need to reset my sleeping schedule this weekend. Starting a digital detox from 8 PM today.",
+    mood: "tired",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  }
+];
+
 export default function ReportsTab() {
+  const { user } = useFirebase();
+  const userId = user?.uid || "family";
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [gratitudes, setGratitudes] = useState<GratitudeLog[]>([]);
+
+  const getDisplayJournals = (): JournalEntry[] => {
+    const isUnlockedReal = sessionStorage.getItem("journal_unlocked") === "true" && sessionStorage.getItem("journal_decoy") !== "true";
+    return isUnlockedReal ? journals : DECOY_ENTRIES;
+  };
   const [loans, setLoans] = useState<Loan[]>([]);
   const [tempLoans, setTempLoans] = useState<TempLoan[]>([]);
   const [formalLoans, setFormalLoans] = useState<FormalLoan[]>([]);
@@ -80,7 +119,7 @@ export default function ReportsTab() {
       const [transSnap, habitSnap, habitLogsSnap, journalSnap, gratSnap, loansSnap, tempSnap, formalSnap] = await Promise.all([
         getDocs(collection(db, "transactions")),
         getDocs(collection(db, "habits")),
-        getDocs(collection(db, "habitLogs")),
+        getDocs(collection(db, "habitLogs", userId, "logs")),
         getDocs(collection(db, "journals")),
         getDocs(collection(db, "gratitude")),
         getDocs(collection(db, "loans")),
@@ -94,9 +133,31 @@ export default function ReportsTab() {
         return arr;
       };
 
+      // Map dynamic DailySummary documents to HabitLog[] array
+      const logsArray: HabitLog[] = [];
+      habitLogsSnap.forEach((docSnap) => {
+        const dateStr = docSnap.id;
+        const data = docSnap.data() as DailySummary;
+        if (data.habits) {
+          Object.entries(data.habits).forEach(([habitId, detail]) => {
+            logsArray.push({
+              id: `${dateStr}_${habitId}`,
+              habitId,
+              date: dateStr,
+              completed: detail.status === "completed",
+              status: detail.status,
+              note: detail.note,
+              completedAt: detail.completedAt,
+              updatedAt: detail.updatedAt,
+              streak: detail.streak
+            });
+          });
+        }
+      });
+
       setTransactions(parse<Transaction>(transSnap));
       setHabits(parse<Habit>(habitSnap));
-      setHabitLogs(parse<HabitLog>(habitLogsSnap));
+      setHabitLogs(logsArray);
       setJournals(parse<JournalEntry>(journalSnap));
       setGratitudes(parse<GratitudeLog>(gratSnap));
       setLoans(parse<Loan>(loansSnap));
@@ -124,7 +185,7 @@ export default function ReportsTab() {
     switch (reportType) {
       case "transactions": return transactions.filter(t => !t.deleted && filter(t.date)).length;
       case "habits":       return habits.length;
-      case "journal":      return journals.filter(j => !j.deleted && filter(j.date)).length;
+      case "journal":      return getDisplayJournals().filter(j => !j.deleted && filter(j.date)).length;
       case "gratitude":    return gratitudes.filter(g => filter(g.date)).length;
       case "loans":        return loans.length;
       case "tempLoans":    return tempLoans.length;
@@ -145,7 +206,7 @@ export default function ReportsTab() {
       };
 
       const filteredTrans = transactions.filter(t => dateFilter(t.date));
-      const filteredJournals = journals.filter(j => dateFilter(j.date));
+      const filteredJournals = getDisplayJournals().filter(j => dateFilter(j.date));
       const filteredGratitudes = gratitudes.filter(g => dateFilter(g.date));
       const packedHabits = habits.map(h => ({
         habit: h,
@@ -172,7 +233,7 @@ export default function ReportsTab() {
 
   const triggerExportBackup = () => {
     const backup = {
-      transactions, habits, habitLogs, journals,
+      transactions, habits, habitLogs, journals: getDisplayJournals(),
       gratitude: gratitudes, loans, tempLoans, formalLoans,
       backupTimestamp: new Date().toISOString()
     };
@@ -204,9 +265,29 @@ export default function ReportsTab() {
           ["formalLoans", parsed.formalLoans || []],
         ];
         for (const [colName, items] of collections) {
-          for (const item of items) {
-            const { id, ...data } = item;
-            await addDoc(collection(db, colName), data);
+          if (colName === "habitLogs") {
+            for (const item of items) {
+              const { habitId, date, completed, status, note, completedAt, updatedAt, streak } = item;
+              if (!habitId || !date) continue;
+              const logRef = doc(db, "habitLogs", userId, "logs", date);
+              await setDoc(logRef, {
+                updatedAt: new Date().toISOString(),
+                habits: {
+                  [habitId]: {
+                    status: status || (completed ? "completed" : "pending"),
+                    note: note || "",
+                    completedAt: completedAt || (completed ? new Date().toISOString() : null),
+                    updatedAt: updatedAt || new Date().toISOString(),
+                    streak: streak || 0
+                  }
+                }
+              }, { merge: true });
+            }
+          } else {
+            for (const item of items) {
+              const { id, ...data } = item;
+              await addDoc(collection(db, colName), data);
+            }
           }
         }
         alert("✅ Database restoration complete!");
@@ -374,7 +455,7 @@ export default function ReportsTab() {
             {[
               { label: "Transactions", count: transactions.filter(t => !t.deleted).length },
               { label: "Habits",       count: habits.length },
-              { label: "Journals",     count: journals.filter(j => !j.deleted).length },
+              { label: "Journals",     count: getDisplayJournals().filter(j => !j.deleted).length },
               { label: "Friend Loans", count: tempLoans.length },
             ].map(s => (
               <div key={s.label} className="bg-slate-950 border border-slate-800 rounded-xl p-2 text-center">

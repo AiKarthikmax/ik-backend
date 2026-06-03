@@ -1,4 +1,7 @@
 import cors from "cors";
+import { NseIndia } from "stock-nse-india";
+
+const nseIndia = new NseIndia();
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -9,7 +12,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // CORS FIX
 app.use(cors({
@@ -24,7 +27,8 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize server-side Gemini client securely
 let ai: GoogleGenAI | null = null;
@@ -130,7 +134,7 @@ Please generate an AI Market Summary containing:
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: systemInstruction,
@@ -184,13 +188,15 @@ Please generate an AI Market Summary containing:
     if (totalDebt <= 0) {
       suggestion = "Fantastic! You are currently carrying zero debt. Focus on growing your personal savings or investments.";
     } else {
+      const daily7 = Math.round(totalDebt / 7);
       const daily30 = Math.round(totalDebt / 30);
+      const daily90 = Math.round(totalDebt / 90);
       const daily365 = Math.round(totalDebt / 365);
-      const daily730 = Math.round(totalDebt / 730);
       suggestion = `To fully close your ₹${totalDebt.toLocaleString()} debt:
+• In 1 week: Pay ₹${daily7.toLocaleString()} /day
 • In 1 month: Pay ₹${daily30.toLocaleString()} /day
+• In 3 months: Pay ₹${daily90.toLocaleString()} /day
 • In 1 year: Pay ₹${daily365.toLocaleString()} /day
-• In 2 years: Pay ₹${daily730.toLocaleString()} /day
 Maintain a daily discipline to reduce outstanding principal upfront.`;
     }
   } else if (type === "habit") {
@@ -202,9 +208,57 @@ Maintain a daily discipline to reduce outstanding principal upfront.`;
     }
   } else if (type === "spiritual") {
     const msgType = payload?.msgType || "god";
-    const bank = msgType === "god" ? fallbackSpiritualMessages.god : fallbackSpiritualMessages.angel;
-    const item = bank[Math.floor(Math.random() * bank.length)];
-    suggestion = item;
+    if (msgType === "god") {
+      const godPrefixes = [
+        "Dear child, ", "Rest your weary heart; ", "Believe in your path: ", "My blessings are with you; ",
+        "Walk in faith today, ", "Do not be discouraged, ", "I have heard your prayers: ",
+        "Your dedication is recognized; ", "Stand strong and know that ", "A grand season is ahead, ", "Peace be with you; "
+      ];
+      const godCores = [
+        "every effort you make is building your future", "your family is being shielded and protected",
+        "wealth and abundance are preparing to manifest", "patience is aligning all your desires",
+        "your strength will overcome this temporary struggle", "the universe is orchestrating a beautiful harvest",
+        "a fresh wave of healing is entering your life", "you are being guided towards wisdom and freedom",
+        "your quiet dedication is seen and valued", "new avenues of financial grace are opening up",
+        "faith is dissolving all your worries"
+      ];
+      const godSuffixes = [
+        " and everything is falling into place.", " so walk with absolute grace today.", " and you are never alone.",
+        " so keep your focus clear and bright.", " and miracles are quietly unfolding.", " so rest in peace and confidence.",
+        " and your future is highly secure.", " so celebrate your micro victories.", " and blessings are multiplying daily.",
+        " so take a deep breath and smile.", " and divine light accompanies your steps."
+      ];
+      
+      const p = godPrefixes[Math.floor(Math.random() * godPrefixes.length)];
+      const c = godCores[Math.floor(Math.random() * godCores.length)];
+      const s = godSuffixes[Math.floor(Math.random() * godSuffixes.length)];
+      suggestion = `${p}${c}${s}`;
+    } else {
+      const angelPrefixes = [
+        "Angel Number 111: ", "Angel Number 222: ", "Angel Number 333: ", "Angel Number 444: ", "Angel Number 555: ",
+        "Angel Number 777: ", "Angel Number 888: ", "Your guardian angel whispers: ",
+        "Seraphim guidance confirms: ", "An angel of protection says: "
+      ];
+      const angelCores = [
+        "your thoughts are manifesting rapidly, focus on light", "everything is working out exactly as it should be",
+        "the ascended masters are surrounding you with support", "your prayers are heard and you are fully protected",
+        "major positive transformations are aligning for you", "you are in absolute alignment with spiritual luck",
+        "financial prosperity is preparing to flow to you", "release all anxiety and step into your freedom",
+        "a beautiful breakthrough is arriving in your life", "keep your habits clean and watch doors open",
+        "a heavy burden is being lifted from your shoulders"
+      ];
+      const angelSuffixes = [
+        " so keep your vibration high.", " so trust the process completely.", " so take a deep breath and relax.",
+        " so proceed with your creative ideas.", " so celebrate your amazing progress.", " so follow your inner intuition.",
+        " so step forward with confidence.", " so feel the divine support.", " so peace reigns in your home.",
+        " so expect a wonderful surprise today.", " so you are guided in every action."
+      ];
+      
+      const p = angelPrefixes[Math.floor(Math.random() * angelPrefixes.length)];
+      const c = angelCores[Math.floor(Math.random() * angelCores.length)];
+      const s = angelSuffixes[Math.floor(Math.random() * angelSuffixes.length)];
+      suggestion = `${p}${c}${s}`;
+    }
   } else if (type === "gratitude") {
     suggestion = "Think of three tiny, physical objects you saw today (like a warm cup, a soft pen, or a green leaf) and express gratitude for their quiet presence.";
   } else if (type === "journal") {
@@ -528,16 +582,178 @@ async function fetchGiftNifty() {
 let globalCache = null;
 let globalCacheTime = 0;
 
+const PRODUCTION_REALTIME_ONLY = true; // Audit mode flag
+
+let globalOptionsCache: Record<string, number> = {};
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms))
+  ]);
+};
+
+// Background option chain poller for indices
+const pollOptions = async () => {
+  try {
+    const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
+    for (const symbol of indices) {
+      const data = await withTimeout(
+        nseIndia.getIndexOptionChain(symbol),
+        8000,
+        `Poll option chain timeout for ${symbol}`
+      );
+      if (data && data.records && data.records.data) {
+        data.records.data.forEach((item: any) => {
+          const expDate = item.expiryDate || item.expiryDates;
+          if (item.CE) {
+            globalOptionsCache[`${symbol}-${expDate}-CE-${item.strikePrice}`] = item.CE.lastPrice || 0;
+          }
+          if (item.PE) {
+            globalOptionsCache[`${symbol}-${expDate}-PE-${item.strikePrice}`] = item.PE.lastPrice || 0;
+          }
+        });
+      }
+    }
+  } catch(e: any) {
+    console.error("Error polling options:", e.message || e);
+  }
+};
+setInterval(pollOptions, 15000); // Fetch every 15s
+setTimeout(pollOptions, 1000); // Initial fetch
+
+app.get("/api/market/options", async (req, res) => {
+  try {
+    let symbol = (req.query.symbol as string || "NIFTY").toUpperCase();
+    if (symbol === "MIDCAP") symbol = "MIDCPNIFTY";
+    const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
+    let data;
+    if (indices.includes(symbol)) {
+      data = await withTimeout(
+        nseIndia.getIndexOptionChain(symbol),
+        8000,
+        `NSE Option Chain request for ${symbol} timed out after 8s`
+      );
+    } else {
+      data = await withTimeout(
+        nseIndia.getEquityOptionChain(symbol),
+        8000,
+        `NSE Equity Option Chain request for ${symbol} timed out after 8s`
+      );
+    }
+
+    if (!data || !data.records) {
+      return res.status(404).json({ error: "Live option chain data unavailable from NSE" });
+    }
+
+    // Return records directly so client can access data.records.expiryDates etc.
+    res.json({
+      source: "NSE_INDIA",
+      timestamp: data.records.timestamp || new Date().toISOString(),
+      isStale: false,
+      records: data.records  // <-- exposed directly as data.records on the client
+    });
+  } catch (err: any) {
+    console.error("Options chain error:", err.message);
+    res.status(550).json({ error: err.message, isStale: true });
+  }
+});
+
+// Cache for candle data (symbol+interval -> {data, fetchedAt})
+const candleCache: Record<string, { data: any[]; fetchedAt: number }> = {};
+
+// /api/market/candles?symbol=NIFTY&interval=5m&range=1d
+// Fetches real intraday or historical OHLCV from Yahoo Finance
+app.get("/api/market/candles", async (req, res) => {
+  try {
+    const rawSymbol = (req.query.symbol as string || "NIFTY").toUpperCase();
+    const interval = (req.query.interval as string) || "5m";
+    const range    = (req.query.range    as string) || "1d";
+
+    // Map our symbols to Yahoo Finance tickers
+    const yahooMap: Record<string, string> = {
+      NIFTY:      "^NSEI",
+      BANKNIFTY:  "^NSEBANK",
+      FINNIFTY:   "^CNXFIN",
+      MIDCPNIFTY: "NIFTY_MID_SELECT.NS",
+      SENSEX:     "^BSESN",
+      VIX:        "^INDIAVIX",
+    };
+    const ticker = yahooMap[rawSymbol] || `${rawSymbol}.NS`;
+    const cacheKey = `${ticker}-${interval}-${range}`;
+    const cacheTTL = interval === "1d" ? 60 * 1000 : 15 * 1000; // 60s for daily, 15s for intraday
+
+    // Serve from cache if fresh
+    if (candleCache[cacheKey] && Date.now() - candleCache[cacheKey].fetchedAt < cacheTTL) {
+      return res.json({ source: "YAHOO_FINANCE", candles: candleCache[cacheKey].data });
+    }
+
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Origin': 'https://finance.yahoo.com',
+        'Referer': 'https://finance.yahoo.com/'
+      }
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ error: `Yahoo Finance returned ${response.status}` });
+    }
+
+    const j = await response.json();
+    const result = j?.chart?.result?.[0];
+    if (!result) {
+      return res.status(404).json({ error: "No chart data from Yahoo Finance" });
+    }
+
+    const timestamps: number[] = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0] || {};
+    const opens   = quote.open   || [];
+    const highs   = quote.high   || [];
+    const lows    = quote.low    || [];
+    const closes  = quote.close  || [];
+    const volumes = quote.volume || [];
+
+    const candles = timestamps
+      .map((ts, i) => ({
+        time:   ts,          // Unix seconds
+        open:   Number((opens[i]   || 0).toFixed(2)),
+        high:   Number((highs[i]   || 0).toFixed(2)),
+        low:    Number((lows[i]    || 0).toFixed(2)),
+        close:  Number((closes[i]  || 0).toFixed(2)),
+        volume: volumes[i] || 0
+      }))
+      .filter(c => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0);
+
+    candleCache[cacheKey] = { data: candles, fetchedAt: Date.now() };
+    res.json({ source: "YAHOO_FINANCE", candles });
+  } catch (err: any) {
+    console.error("Candle fetch error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/market/global", async (req, res) => {
   const now = Date.now();
-  if (globalCache && now - globalCacheTime < 15000) {
-    return res.json(globalCache);
+  if (globalCache && now - globalCacheTime < 5000) {
+    const isStale = (now - globalCacheTime) > 60000;
+    return res.json({
+      ...globalCache,
+      source: "YAHOO_FINANCE_&_NSE",
+      timestamp: new Date(globalCacheTime).toISOString(),
+      isStale: isStale
+    });
   }
 
   const symbols = {
     nifty: '^NSEI',
     sensex: '^BSESN',
     banknifty: '^NSEBANK',
+    finnifty: '^CNXFIN',
+    midcap: 'NIFTY_MID_SELECT.NS',
+    indiavix: '^INDIAVIX',
     nifty_it: '^CNXIT',
     nifty_auto: '^CNXAUTO',
     nifty_pharma: '^CNXPHARMA',
@@ -586,14 +802,20 @@ app.get("/api/market/global", async (req, res) => {
       const change = price - prevClose;
       const pct = prevClose ? (change / prevClose) * 100 : 0;
       
+      const openArray = j.chart.result[0].indicators?.quote?.[0]?.open || [];
+      const openPrice = openArray.find((x: any) => x !== null) || price;
+      
       results[key] = {
         price: Number(price.toFixed(2)),
         change: Number(change.toFixed(2)),
         pct: Number(pct.toFixed(2)),
         high: Number((meta.regularMarketDayHigh || price).toFixed(2)),
         low: Number((meta.regularMarketDayLow || price).toFixed(2)),
+        open: Number(openPrice.toFixed(2)),
+        previousClose: Number(prevClose.toFixed(2)),
         high52w: Number((meta.fiftyTwoWeekHigh || price).toFixed(2)),
         low52w: Number((meta.fiftyTwoWeekLow || price).toFixed(2)),
+        timestamp: meta.regularMarketTime,
         positive: change >= 0
       };
     } catch (e) {
@@ -608,54 +830,13 @@ app.get("/api/market/global", async (req, res) => {
 
   await Promise.allSettled([...fetchPromises, giftPromise]);
 
-  const defaults = {
-    nifty: { price: 22146.50, change: 148.20, pct: 0.67, high: 22180.20, low: 22080.55, high52w: 23110.00, low52w: 18830.00, positive: true },
-    sensex: { price: 72832.10, change: 452.80, pct: 0.63, high: 72950.00, low: 72600.00, high52w: 75124.00, low52w: 62000.00, positive: true },
-    banknifty: { price: 46911.80, change: -124.50, pct: -0.26, high: 47100.00, low: 46750.00, high52w: 48636.00, low52w: 42100.00, positive: false },
-    nifty_it: { price: 38245.50, change: 412.30, pct: 1.09, high: 38350.00, low: 37900.00, high52w: 39500.00, low52w: 28000.00, positive: true },
-    nifty_auto: { price: 20630.10, change: -85.40, pct: -0.41, high: 20800.00, low: 20550.00, high52w: 21500.00, low52w: 13000.00, positive: false },
-    nifty_pharma: { price: 18940.20, change: 142.10, pct: 0.76, high: 19000.00, low: 18750.00, high52w: 19800.00, low52w: 12000.00, positive: true },
-    nifty_fmcg: { price: 54120.30, change: -230.40, pct: -0.42, high: 54400.00, low: 53950.00, high52w: 56200.00, low52w: 43000.00, positive: false },
-    nifty_metal: { price: 7945.80, change: 82.50, pct: 1.05, high: 7980.00, low: 7850.00, high52w: 8300.00, low52w: 5500.00, positive: true },
-    nifty_100: { price: 23150.40, change: 135.20, pct: 0.59, high: 23200.00, low: 23080.00, high52w: 24200.00, low52w: 19500.00, positive: true },
-    dow: { price: 39069.23, change: 184.84, pct: 0.48, positive: true },
-    sp500: { price: 5088.80, change: 41.50, pct: 0.82, positive: true },
-    nasdaq: { price: 16009.22, change: 115.30, pct: 0.73, positive: true },
-    russell: { price: 2016.20, change: 12.10, pct: 0.60, positive: true },
-    vix: { price: 14.22, change: -0.85, pct: -5.64, positive: false },
-    nikkei: { price: 39098.68, change: 275.87, pct: 0.71, positive: true },
-    hangseng: { price: 16725.86, change: -17.20, pct: -0.10, positive: false },
-    shanghai: { price: 3004.88, change: 16.50, pct: 0.55, positive: true },
-    ftse: { price: 7706.28, change: 21.90, pct: 0.28, positive: true },
-    dax: { price: 17419.33, change: 49.60, pct: 0.29, positive: true },
-    cac: { price: 7966.68, change: 55.40, pct: 0.70, positive: true },
-    stoxx50: { price: 4872.50, change: 35.20, pct: 0.73, positive: true },
-    usdinr: { price: 83.28, change: 0.02, pct: 0.02, positive: true },
-    gold: { price: 2035.40, change: 12.50, pct: 0.62, positive: true },
-    silver: { price: 22.85, change: 0.15, pct: 0.66, positive: true },
-    crude_brent: { price: 81.62, change: -0.45, pct: -0.55, positive: false },
-    crude_wti: { price: 76.49, change: -0.52, pct: -0.67, positive: false },
-    nat_gas: { price: 1.65, change: -0.05, pct: -2.94, positive: false }
-  };
-
   keys.forEach(key => {
     if (!results[key]) {
       const prev = globalCache ? globalCache[key] : null;
-      const def = defaults[key];
       if (prev) {
-        const drift = (Math.random() - 0.5) * 0.0006;
-        const nextPrice = Number((prev.price * (1 + drift)).toFixed(2));
-        const change = nextPrice - (prev.price - prev.change);
-        results[key] = {
-          ...prev,
-          price: nextPrice,
-          change: Number(change.toFixed(2)),
-          pct: Number(((change / (nextPrice - change)) * 100).toFixed(2)),
-          high: Number(Math.max(prev.high || nextPrice, nextPrice).toFixed(2)),
-          low: Number(Math.min(prev.low || nextPrice, nextPrice).toFixed(2))
-        };
-      } else if (def) {
-        results[key] = def;
+        results[key] = prev;
+      } else {
+        results[key] = null;
       }
     }
   });
@@ -675,22 +856,12 @@ app.get("/api/market/global", async (req, res) => {
         positive: change >= 0
       };
     } else {
-      results.giftnifty = { price: 22170.50, change: 164.00, pct: 0.74, positive: true };
+      results.giftnifty = null;
     }
   }
 
-  results.nifty_midcap = {
-    price: Math.round(results.nifty.price * 2.15),
-    change: Number((results.nifty.change * 2.3).toFixed(2)),
-    pct: Number((results.nifty.pct * 1.1).toFixed(2)),
-    high: Math.round(results.nifty.high * 2.15),
-    low: Math.round(results.nifty.low * 2.15),
-    high52w: Math.round(results.nifty.high52w * 2.2),
-    low52w: Math.round(results.nifty.low52w * 2.1),
-    positive: results.nifty.change >= 0
-  };
-
-  results.nifty_smallcap = {
+  results.nifty_midcap = results.midcap;
+  results.nifty_smallcap = results.nifty ? {
     price: Math.round(results.nifty.price * 0.72),
     change: Number((results.nifty.change * 0.85).toFixed(2)),
     pct: Number((results.nifty.pct * 1.25).toFixed(2)),
@@ -699,7 +870,7 @@ app.get("/api/market/global", async (req, res) => {
     high52w: Math.round(results.nifty.high52w * 0.75),
     low52w: Math.round(results.nifty.low52w * 0.68),
     positive: results.nifty.change >= 0
-  };
+  } : null;
 
   globalCache = results;
   globalCacheTime = now;
@@ -849,7 +1020,7 @@ app.get("/api/market/events", (req, res) => {
 
       // 5b. BSE Sensex Expiry (Every Thursday)
       eventsList.push({
-        id: `sensex_expiry_${dateKeySuffix}`,
+        id: `sensex_expiry_thu_${dateKeySuffix}`,
         name: "SENSEX Options Expiry Session",
         date: formatDate(thuDate),
         impact: "HIGH",
@@ -963,7 +1134,7 @@ app.get("/api/market/events", (req, res) => {
 
       // 12. BSE Sensex Expiry (Every Friday)
       eventsList.push({
-        id: `sensex_expiry_${dateKeySuffix}`,
+        id: `sensex_expiry_fri_${dateKeySuffix}`,
         name: "BSE Sensex Weekly Options Expiry Session",
         date: formatDate(friDate),
         impact: "HIGH",

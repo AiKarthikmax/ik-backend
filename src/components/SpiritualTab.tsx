@@ -7,9 +7,12 @@ import {
   updateDoc,
   doc
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
+import { db, handleFirestoreError, OperationType, getApiUrl } from "../firebase";
 import { GratitudeLog } from "../types";
 import { handleFileUpload } from "../attachmentHelper";
+import ImageCropperModal from "./ImageCropperModal";
+import { generateRandomAffirmations } from "./affirmationsData";
+import { limit, getDocs } from "firebase/firestore";
 import {
   Sparkles,
   Heart,
@@ -20,10 +23,12 @@ import {
   Mic,
   Smile,
   FileText,
-  X
+  X,
+  Check
 } from "lucide-react";
 
 export default function SpiritualTab() {
+  const todayStr = new Date().toISOString().split("T")[0];
   const [gratitudes, setGratitudes] = useState<GratitudeLog[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -42,12 +47,50 @@ export default function SpiritualTab() {
   const [attachments, setAttachments] = useState<{ name: string; url: string; type: string }[]>([]);
   const [activeAttachment, setActiveAttachment] = useState<{ name: string; url: string; type: string } | null>(null);
 
+  // Tamil gratitude input state
+  const [promptTamil, setPromptTamil] = useState("");
+
+  // Crop photo state
+  const [cropImageSrc, setCropImageSrc] = useState<string>("");
+  const [cropImageName, setCropImageName] = useState<string>("");
+
+  // Daily random affirmations pool state
+  const [affirmations, setAffirmations] = useState<{ id: number; text: string }[]>(() => {
+    const saved = localStorage.getItem(`ik_affirmations_list_${todayStr}`);
+    if (saved) return JSON.parse(saved);
+    const generated = generateRandomAffirmations(10);
+    localStorage.setItem(`ik_affirmations_list_${todayStr}`, JSON.stringify(generated));
+    return generated;
+  });
+
+  // Daily 10 affirmations read marks state
+  const [readAffirmations, setReadAffirmations] = useState<number[]>(() => {
+    const saved = localStorage.getItem(`ik_affirmations_read_${todayStr}`);
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const handleToggleAffirmation = (id: number) => {
+    let updated;
+    if (readAffirmations.includes(id)) {
+      updated = readAffirmations.filter((x) => x !== id);
+    } else {
+      updated = [...readAffirmations, id];
+    }
+    setReadAffirmations(updated);
+    localStorage.setItem(`ik_affirmations_read_${todayStr}`, JSON.stringify(updated));
+  };
+
+  const handleRefreshAffirmations = () => {
+    const generated = generateRandomAffirmations(10);
+    setAffirmations(generated);
+    localStorage.setItem(`ik_affirmations_list_${todayStr}`, JSON.stringify(generated));
+    setReadAffirmations([]);
+    localStorage.setItem(`ik_affirmations_read_${todayStr}`, JSON.stringify([]));
+  };
+
   // AI gratitude coaching tips
   const [aiTip, setAiTip] = useState("");
   const [aiTipLoading, setAiTipLoading] = useState(false);
-
-  // Date String
-  const todayStr = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
     // Load gratitude entries
@@ -78,7 +121,15 @@ export default function SpiritualTab() {
     fetchSpiritualMessage();
     fetchAISuggestedGratitude();
 
-    return () => unsubscribe();
+    // Auto-update message every 5 minutes (300,000 ms)
+    const timerId = setInterval(() => {
+      fetchSpiritualMessage();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(timerId);
+    };
   }, []);
 
   // Fetch spiritual guidelines from server
@@ -86,7 +137,7 @@ export default function SpiritualTab() {
     setMsgLoading(true);
     const targetType = forcedType || msgType;
     try {
-      const response = await fetch("/api/ai", {
+      const response = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -95,13 +146,61 @@ export default function SpiritualTab() {
         })
       });
       const data = await response.json();
-      setCurrentMessage(data.suggestion);
+      if (data.suggestion) {
+        setCurrentMessage(data.suggestion);
+      } else {
+        throw new Error("No suggestion found");
+      }
     } catch (e) {
-      setCurrentMessage(
-        targetType === "god"
-          ? "Your strength is not in your hands, but in your faith and patience."
-          : "An angel of abundance surrounds your workspace today."
-      );
+      if (targetType === "god") {
+        const prefixes = [
+          "Dear child, ", "Rest your weary heart; ", "Believe in your path: ", "My blessings are with you; ",
+          "Walk in faith today, ", "Do not be discouraged, ", "I have heard your prayers: ",
+          "Your dedication is recognized; ", "Stand strong and know that ", "A grand season is ahead, ", "Peace be with you; "
+        ];
+        const cores = [
+          "every effort you make is building your future", "your family is being shielded and protected",
+          "wealth and abundance are preparing to manifest", "patience is aligning all your desires",
+          "your strength will overcome this temporary struggle", "the universe is orchestrating a beautiful harvest",
+          "a fresh wave of healing is entering your life", "you are being guided towards wisdom and freedom",
+          "your quiet dedication is seen and valued", "new avenues of financial grace are opening up",
+          "faith is dissolving all your worries"
+        ];
+        const suffixes = [
+          " and everything is falling into place.", " so walk with absolute grace today.", " and you are never alone.",
+          " so keep your focus clear and bright.", " and miracles are quietly unfolding.", " so rest in peace and confidence.",
+          " and your future is highly secure.", " so celebrate your micro victories.", " and blessings are multiplying daily.",
+          " so take a deep breath and smile.", " and divine light accompanies your steps."
+        ];
+        const p = prefixes[Math.floor(Math.random() * prefixes.length)];
+        const c = cores[Math.floor(Math.random() * cores.length)];
+        const s = suffixes[Math.floor(Math.random() * suffixes.length)];
+        setCurrentMessage(`${p}${c}${s}`);
+      } else {
+        const prefixes = [
+          "Angel Number 111: ", "Angel Number 222: ", "Angel Number 333: ", "Angel Number 444: ", "Angel Number 555: ",
+          "Angel Number 777: ", "Angel Number 888: ", "Your guardian angel whispers: ",
+          "Seraphim guidance confirms: ", "An angel of protection says: "
+        ];
+        const cores = [
+          "your thoughts are manifesting rapidly, focus on light", "everything is working out exactly as it should be",
+          "the ascended masters are surrounding you with support", "your prayers are heard and you are fully protected",
+          "major positive transformations are aligning for you", "you are in absolute alignment with spiritual luck",
+          "financial prosperity is preparing to flow to you", "release all anxiety and step into your freedom",
+          "a beautiful breakthrough is arriving in your life", "keep your habits clean and watch doors open",
+          "a heavy burden is being lifted from your shoulders"
+        ];
+        const suffixes = [
+          " so keep your vibration high.", " so trust the process completely.", " so take a deep breath and relax.",
+          " so proceed with your creative ideas.", " so celebrate your amazing progress.", " so follow your inner intuition.",
+          " so step forward with confidence.", " so feel the divine support.", " so peace reigns in your home.",
+          " so walk with a grateful mindset."
+        ];
+        const p = prefixes[Math.floor(Math.random() * prefixes.length)];
+        const c = cores[Math.floor(Math.random() * cores.length)];
+        const s = suffixes[Math.floor(Math.random() * suffixes.length)];
+        setCurrentMessage(`${p}${c}${s}`);
+      }
     } finally {
       setMsgLoading(false);
     }
@@ -129,10 +228,39 @@ export default function SpiritualTab() {
   const fetchAISuggestedGratitude = async () => {
     setAiTipLoading(true);
     try {
-      const response = await fetch("/api/ai", {
+      const recentActivities: string[] = [];
+
+      // Query 3 recent transactions
+      const transSnap = await getDocs(query(collection(db, "transactions"), limit(3)));
+      transSnap.forEach((d) => {
+        const data = d.data();
+        if (data.description && !data.deleted) {
+          recentActivities.push(`${data.type === "income" ? "Earned" : "Spent"} for ${data.description}`);
+        }
+      });
+
+      // Query 3 recent journals
+      const journalSnap = await getDocs(query(collection(db, "journals"), limit(3)));
+      journalSnap.forEach((d) => {
+        const data = d.data();
+        if (data.content && !data.deleted) {
+          recentActivities.push(`Mood was ${data.mood}: ${data.content.slice(0, 45)}...`);
+        }
+      });
+
+      // Query 3 recent habits
+      const habitSnap = await getDocs(query(collection(db, "habits"), limit(3)));
+      habitSnap.forEach((d) => {
+        const data = d.data();
+        if (data.name && !data.archived) {
+          recentActivities.push(`Tracks habit: ${data.name}`);
+        }
+      });
+
+      const response = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "gratitude", payload: {} })
+        body: JSON.stringify({ type: "gratitude", payload: { activities: recentActivities } })
       });
       const data = await response.json();
       setAiTip(data.suggestion);
@@ -143,7 +271,7 @@ export default function SpiritualTab() {
     }
   };
 
-  // File / Photo helpers
+  // File / Photo helpers with visual crop
   const handlePhotoCapture = async () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -152,16 +280,12 @@ export default function SpiritualTab() {
     input.onchange = async (e: any) => {
       const file = e.target.files?.[0];
       if (file) {
-        setUploading(true);
-        try {
-          const attach = await handleFileUpload(file, "gratitude", file.name || "photo.jpg");
-          setAttachments((prev) => [...prev, attach]);
-        } catch (err: any) {
-          console.error("Gratitude photo upload error:", err);
-          alert(err.message || "Failed to process gratitude photo.");
-        } finally {
-          setUploading(false);
-        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          setCropImageSrc(reader.result as string);
+          setCropImageName(file.name || "photo.jpg");
+        };
+        reader.readAsDataURL(file);
       }
     };
     input.click();
@@ -170,7 +294,7 @@ export default function SpiritualTab() {
   // Submit today's gratitude journal
   const handleSubmitGratitude = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt1.trim() && !prompt2.trim() && !prompt3.trim()) {
+    if (!prompt1.trim() && !prompt2.trim() && !prompt3.trim() && !promptTamil.trim()) {
       alert("Please log at least one statement of gratitude before saving.");
       return;
     }
@@ -178,7 +302,8 @@ export default function SpiritualTab() {
     const entriesList = [
       prompt1.trim() || "A beautiful, calm day.",
       prompt2.trim() || "Support from friends or teammates.",
-      prompt3.trim() || "Good food and physical balance."
+      prompt3.trim() || "Good food and physical balance.",
+      promptTamil.trim() || "இன்றைய நாள் அமைதியாகவும் மகிழ்ச்சியாகவும் அமைந்தது."
     ];
 
     const payload: Omit<GratitudeLog, "id"> = {
@@ -193,6 +318,7 @@ export default function SpiritualTab() {
       setPrompt1("");
       setPrompt2("");
       setPrompt3("");
+      setPromptTamil("");
       setAttachments([]);
       alert("Today's gratitude successfully registered!");
     } catch (error) {
@@ -280,8 +406,77 @@ export default function SpiritualTab() {
                   favorites.includes(currentMessage) ? "fill-rose-500 text-rose-500" : "text-slate-400"
                 }`}
               />
-              {favorites.includes(currentMessage) ? "Favorited Message" : "Favorite Message"}
+              {favorites.includes(currentMessage) ? "Remove from Favorites" : "Save to Favorites"}
             </button>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4 shadow-sm animate-fade-in-up">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                <Sparkles className="w-3.5 h-3.5 text-amber-450 fill-amber-500/10" />
+                தினசரி நேர்மறை எண்ணங்கள் / Daily Affirmations
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleRefreshAffirmations}
+                  className="text-2xs text-indigo-400 hover:text-indigo-300 font-bold hover:underline font-mono cursor-pointer"
+                >
+                  Refresh
+                </button>
+                <span className="text-[10px] text-slate-400 font-mono font-bold">
+                  {readAffirmations.length} / 10
+                </span>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="space-y-1">
+              <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-amber-450 to-indigo-500 h-full rounded-full transition-all duration-300"
+                  style={{ width: `${(readAffirmations.length / 10) * 100}%` }}
+                />
+              </div>
+              {readAffirmations.length === 10 && (
+                <p className="text-[10px] text-emerald-400 font-mono text-center font-bold mt-1 animate-pulse">
+                  🎉 வாழ்த்துகள்! இன்றைய தினசரி நேர்மறை எண்ணங்கள் முழுமை பெற்றது! / Daily Affirmations Complete!
+                </p>
+              )}
+            </div>
+
+            {/* Checklist items */}
+            <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+              {affirmations.map((aff) => {
+                const isRead = readAffirmations.includes(aff.id);
+                return (
+                  <div
+                    key={aff.id}
+                    onClick={() => handleToggleAffirmation(aff.id)}
+                    className={`flex items-start gap-3 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                      isRead
+                        ? "bg-slate-950/80 border-indigo-500/30 opacity-70"
+                        : "bg-slate-950 border-slate-850 hover:border-slate-700"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 mt-0.5 transition ${
+                        isRead
+                          ? "bg-indigo-600 border-indigo-500 text-white"
+                          : "border-slate-700 bg-transparent text-transparent"
+                      }`}
+                    >
+                      <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    </button>
+                    <p className={`text-[11px] leading-relaxed font-sans ${
+                      isRead ? "line-through text-slate-500 font-medium" : "text-slate-200 font-semibold"
+                    }`}>
+                      <span className="text-amber-455 mr-1 font-bold">{aff.id}.</span>
+                      {aff.text}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Favorited library logs */}
@@ -363,6 +558,16 @@ export default function SpiritualTab() {
                       onChange={(e) => setPrompt3(e.target.value)}
                       placeholder="Completing hard duties beautifully today..."
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 font-mono mb-1 font-sans">4. நான் இன்று நன்றியுடன் இருக்கும் விஷயம்... (Tamil Gratitude)</label>
+                    <input
+                      type="text"
+                      value={promptTamil}
+                      onChange={(e) => setPromptTamil(e.target.value)}
+                      placeholder="இன்றைய நாள் அமைதியாகவும் மகிழ்ச்சியாகவும் அமைந்தது..."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-sans"
                     />
                   </div>
                 </div>
@@ -540,6 +745,32 @@ export default function SpiritualTab() {
           </div>
         </div>
       )}
+
+      {cropImageSrc && (
+        <ImageCropperModal
+          imageSrc={cropImageSrc}
+          imageName={cropImageName}
+          onCrop={async (croppedFile) => {
+            setCropImageSrc("");
+            setUploading(true);
+            try {
+              const attach = await handleFileUpload(croppedFile, "gratitude", croppedFile.name);
+              setAttachments((prev) => [...prev, attach]);
+            } catch (err: any) {
+              console.error("Gratitude photo upload error:", err);
+              alert(err.message || "Failed to process gratitude photo.");
+            } finally {
+              setUploading(false);
+            }
+          }}
+          onCancel={() => setCropImageSrc("")}
+          onRetake={() => {
+            setCropImageSrc("");
+            handlePhotoCapture();
+          }}
+        />
+      )}
+
     </div>
   );
 }

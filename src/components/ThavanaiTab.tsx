@@ -10,7 +10,7 @@ import {
   getDoc,
   deleteDoc
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
+import { db, handleFirestoreError, OperationType, getApiUrl } from "../firebase";
 import { Loan, LoanInstallment } from "../types";
 import { generatePDF } from "../pdfGenerator";
 import ConfirmModal from "./ConfirmModal";
@@ -125,7 +125,7 @@ export default function ThavanaiTab() {
     setAiLoading(true);
     setAiAdvice("");
     try {
-      const response = await fetch("/api/ai", {
+      const response = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -524,15 +524,47 @@ export default function ThavanaiTab() {
         </div>
 
         {/* AI smart text output */}
-        <div className="bg-indigo-950/40 border border-indigo-500/30 p-5 rounded-2xl sm:col-span-1 text-indigo-200 text-xs shadow-sm">
-          <div className="flex items-center gap-1.5 font-bold text-white uppercase text-[10px] mb-2 tracking-wider">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            Active Payoff Advisor
+        <div className="bg-indigo-950/40 border border-indigo-500/30 p-5 rounded-2xl sm:col-span-1 text-indigo-200 text-xs shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-1.5 font-bold text-white uppercase text-[10px] mb-2 tracking-wider">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              Active Payoff Advisor
+            </div>
+            {aiLoading ? (
+              <span className="font-mono animate-pulse">Computing recalculation vectors...</span>
+            ) : (
+              <p className="font-mono leading-relaxed">{aiAdvice || "carrying zero active installment debts!"}</p>
+            )}
           </div>
-          {aiLoading ? (
-            <span className="font-mono animate-pulse">Computing recalculation vectors...</span>
-          ) : (
-            <p className="font-mono leading-relaxed">{aiAdvice || "carrying zero active installment debts!"}</p>
+          {totalOutstanding > 0 && (
+            <div className="mt-3.5 border-t border-indigo-500/20 pt-3">
+              <table className="w-full text-[10px] font-mono text-indigo-300">
+                <thead>
+                  <tr className="border-b border-indigo-500/10 text-indigo-200 uppercase tracking-widest font-black">
+                    <th className="pb-1 text-left">Target Window</th>
+                    <th className="pb-1 text-right">Daily Target</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-indigo-500/5">
+                  <tr>
+                    <td className="py-1">1 Week (7d)</td>
+                    <td className="py-1 text-right font-bold text-white">₹ {Math.ceil(totalOutstanding / 7).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1">1 Month (30d)</td>
+                    <td className="py-1 text-right font-bold text-white">₹ {Math.ceil(totalOutstanding / 30).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1">3 Months (90d)</td>
+                    <td className="py-1 text-right font-bold text-white">₹ {Math.ceil(totalOutstanding / 90).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1">1 Year (365d)</td>
+                    <td className="py-1 text-right font-bold text-white">₹ {Math.ceil(totalOutstanding / 365).toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>

@@ -8,9 +8,10 @@ import {
   doc,
   serverTimestamp
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
+import { db, handleFirestoreError, OperationType, getApiUrl } from "../firebase";
 import { JournalEntry } from "../types";
 import { handleFileUpload } from "../attachmentHelper";
+import ImageCropperModal from "./ImageCropperModal";
 import {
   BookOpen,
   Search,
@@ -31,6 +32,7 @@ import {
 } from "lucide-react";
 
 const MOODS = [
+  { value: "excited", label: "Excited", emoji: "🤩", color: "text-purple-400 bg-purple-500/10 border-purple-500/30" },
   { value: "happy", label: "Happy", emoji: "😊", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
   { value: "neutral", label: "Neutral", emoji: "😐", color: "text-blue-400 bg-blue-500/10 border-blue-500/30" },
   { value: "tired", label: "Tired", emoji: "🥱", color: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
@@ -38,15 +40,127 @@ const MOODS = [
   { value: "sad", label: "Sad", emoji: "😢", color: "text-rose-400 bg-rose-500/10 border-rose-500/30" }
 ];
 
+const DECOY_ENTRIES: JournalEntry[] = [
+  {
+    id: "decoy-1",
+    date: "2026-05-27",
+    content: "Had a great gym session in the morning. Focus was on compound movements today. Hit a personal record of 120kg on squats for 5 reps. Mind feels extremely clear and energized.",
+    mood: "happy",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  },
+  {
+    id: "decoy-2",
+    date: "2026-05-25",
+    content: "Reflected on the current financial markets today. Decided to sit on cash and wait for a clear setup on the Nifty index. Better to preserve capital than to force trades in a choppy range.",
+    mood: "neutral",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  },
+  {
+    id: "decoy-3",
+    date: "2026-05-24",
+    content: "Feeling a bit exhausted after a long week of meetings. Need to reset my sleeping schedule this weekend. Starting a digital detox from 8 PM today.",
+    mood: "tired",
+    attachments: [],
+    deleted: false,
+    editHistory: []
+  }
+];
+
 export default function JournalTab() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Lock screen state
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem("journal_unlocked") === "true");
+  const [decoyMode, setDecoyMode] = useState(() => sessionStorage.getItem("journal_decoy") === "true");
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [shouldShake, setShouldShake] = useState(false);
+  const [decoyEntries, setDecoyEntries] = useState<JournalEntry[]>(DECOY_ENTRIES);
+
+  const handleUnlock = (codeToTest: string) => {
+    const encoded = btoa(codeToTest);
+    if (encoded === "Njg5MTYwMDI=") {
+      sessionStorage.setItem("journal_unlocked", "true");
+      sessionStorage.setItem("journal_decoy", "false");
+      setUnlocked(true);
+      setDecoyMode(false);
+      setPin("");
+      setError("");
+    } else if (encoded === "MjUyNQ==") {
+      sessionStorage.setItem("journal_unlocked", "true");
+      sessionStorage.setItem("journal_decoy", "true");
+      setUnlocked(true);
+      setDecoyMode(true);
+      setPin("");
+      setError("");
+    } else {
+      setError("Incorrect security PIN");
+      setPin("");
+      setShouldShake(true);
+      setTimeout(() => setShouldShake(false), 400);
+    }
+  };
+
+  useEffect(() => {
+    if (unlocked) return;
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= "0" && e.key <= "9") {
+        if (pin.length < 8) {
+          const nextPin = pin + e.key;
+          setPin(nextPin);
+          setError("");
+          if (nextPin === "2525") {
+            sessionStorage.setItem("journal_unlocked", "true");
+            sessionStorage.setItem("journal_decoy", "true");
+            setUnlocked(true);
+            setDecoyMode(true);
+            setPin("");
+          } else if (nextPin === "68916002") {
+            sessionStorage.setItem("journal_unlocked", "true");
+            sessionStorage.setItem("journal_decoy", "false");
+            setUnlocked(true);
+            setDecoyMode(false);
+            setPin("");
+          }
+        }
+      } else if (e.key === "Backspace") {
+        setPin((prev) => prev.slice(0, -1));
+        setError("");
+      } else if (e.key === "Escape" || e.key === "c" || e.key === "C") {
+        setPin("");
+        setError("");
+      } else if (e.key === "Enter") {
+        if (pin) {
+          handleUnlock(pin);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [pin, unlocked]);
+
+  // Auto-lock when user switches away from the Journal tab
+  useEffect(() => {
+    return () => {
+      sessionStorage.removeItem("journal_unlocked");
+      sessionStorage.removeItem("journal_decoy");
+    };
+  }, []);
+
   // Form inputs
   const [content, setContent] = useState("");
-  const [mood, setMood] = useState("neutral");
+  const [mood, setMood] = useState("happy");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [formError, setFormError] = useState("");
+
+  // Crop Photo state
+  const [cropImageSrc, setCropImageSrc] = useState<string>("");
+  const [cropImageName, setCropImageName] = useState<string>("");
 
   // Attachments State
   const [uploading, setUploading] = useState(false);
@@ -95,7 +209,7 @@ export default function JournalTab() {
     setAiLoading(true);
     setAiPrompts("");
     try {
-      const response = await fetch("/api/ai", {
+      const response = await fetch(getApiUrl("/api/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -205,6 +319,24 @@ export default function JournalTab() {
       return;
     }
 
+    if (decoyMode) {
+      const newEntry: JournalEntry = {
+        id: `decoy-${Date.now()}`,
+        date,
+        content: content.trim(),
+        mood,
+        attachments,
+        deleted: false,
+        editHistory: []
+      };
+      setDecoyEntries((prev) => [newEntry, ...prev]);
+      setContent("");
+      setAttachments([]);
+      setFormError("");
+      alert("Journal session logged!");
+      return;
+    }
+
     const payload: Omit<JournalEntry, "id"> = {
       date,
       content: content.trim(),
@@ -261,6 +393,29 @@ export default function JournalTab() {
       }
     ];
 
+    if (decoyMode) {
+      setDecoyEntries((prev) =>
+        prev.map((e) =>
+          e.id === editingEntry.id
+            ? {
+                ...e,
+                content: content.trim(),
+                mood,
+                date,
+                attachments,
+                editHistory: updatedHistory
+              }
+            : e
+        )
+      );
+      setEditingEntry(null);
+      setEditReason("");
+      setContent("");
+      setAttachments([]);
+      alert("Journal entry updated successfully.");
+      return;
+    }
+
     try {
       const docRef = doc(db, "journals", editingEntry.id);
       await updateDoc(docRef, {
@@ -284,6 +439,13 @@ export default function JournalTab() {
   // Soft Delete representation
   const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to remove this journal entry? (Soft-deleted, retained in backend database)")) {
+      if (decoyMode) {
+        setDecoyEntries((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, deleted: true } : e))
+        );
+        alert("Removed logged journal card.");
+        return;
+      }
       try {
         const docRef = doc(db, "journals", id);
         await updateDoc(docRef, { deleted: true });
@@ -294,7 +456,8 @@ export default function JournalTab() {
     }
   };
 
-  const activeEntries = entries.filter((e) => !e.deleted);
+  const displayEntries = decoyMode ? decoyEntries : entries;
+  const activeEntries = displayEntries.filter((e) => !e.deleted);
 
   // Mood Trend Counter metrics
   const moodAggregation = activeEntries.reduce((acc: { [key: string]: number }, e) => {
@@ -308,6 +471,145 @@ export default function JournalTab() {
     return matchesSearch && matchesMood;
   });
 
+  if (!unlocked) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh] p-4">
+        <style>{`
+          @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+          }
+          .animate-shake {
+            animation: shake 0.4s ease-in-out;
+          }
+        `}</style>
+        <div className={`bg-slate-900/90 border border-slate-800 rounded-3xl p-6.5 max-w-sm w-full text-center space-y-6 shadow-2xl relative transition-all duration-300 ${
+          shouldShake ? "animate-shake border-rose-500/50" : "hover:border-indigo-500/30"
+        }`}>
+          {/* Header */}
+          <div className="space-y-2">
+            <div className="w-14 h-14 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto border border-indigo-500/20">
+              <BookOpen className="w-6 h-6 text-indigo-400 animate-pulse" />
+            </div>
+            <h3 className="text-base font-bold text-white font-sans tracking-tight">Thoughts Journal</h3>
+            <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">🔒 Secure Access Lock</p>
+          </div>
+
+          {/* Pin Dots Display */}
+          <div className="flex justify-center gap-2.5 py-1">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-3.5 h-3.5 rounded-full border transition-all duration-200 ${
+                  i < pin.length
+                    ? "bg-indigo-500 border-indigo-400 scale-110 shadow-[0_0_8px_rgba(99,102,241,0.6)]"
+                    : "bg-slate-950 border-slate-800"
+                }`}
+              />
+            ))}
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="text-[10px] text-rose-400 font-mono bg-rose-500/10 border border-rose-500/20 py-1.5 px-3.5 rounded-xl inline-block">
+              {error}
+            </div>
+          )}
+
+          {/* Keypad Grid */}
+          <div className="grid grid-cols-3 gap-3">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => {
+                  if (pin.length < 8) {
+                    const nextPin = pin + num;
+                    setPin(nextPin);
+                    setError("");
+                    if (nextPin === "2525") {
+                      sessionStorage.setItem("journal_unlocked", "true");
+                      sessionStorage.setItem("journal_decoy", "true");
+                      setUnlocked(true);
+                      setDecoyMode(true);
+                      setPin("");
+                    } else if (nextPin === "68916002") {
+                      sessionStorage.setItem("journal_unlocked", "true");
+                      sessionStorage.setItem("journal_decoy", "false");
+                      setUnlocked(true);
+                      setDecoyMode(false);
+                      setPin("");
+                    }
+                  }
+                }}
+                className="w-full aspect-square bg-slate-950 hover:bg-indigo-950/20 border border-slate-850 hover:border-indigo-500/30 text-white font-bold text-sm rounded-2xl flex items-center justify-center transition active:scale-95 cursor-pointer font-mono shadow-sm"
+              >
+                {num}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setPin("");
+                setError("");
+              }}
+              className="w-full aspect-square bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-slate-400 font-bold text-xs rounded-2xl flex items-center justify-center transition active:scale-95 cursor-pointer font-mono"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (pin.length < 8) {
+                  const nextPin = pin + "0";
+                  setPin(nextPin);
+                  setError("");
+                  if (nextPin === "2525") {
+                    sessionStorage.setItem("journal_unlocked", "true");
+                    sessionStorage.setItem("journal_decoy", "true");
+                    setUnlocked(true);
+                    setDecoyMode(true);
+                    setPin("");
+                  } else if (nextPin === "68916002") {
+                    sessionStorage.setItem("journal_unlocked", "true");
+                    sessionStorage.setItem("journal_decoy", "false");
+                    setUnlocked(true);
+                    setDecoyMode(false);
+                    setPin("");
+                  }
+                }
+              }}
+              className="w-full aspect-square bg-slate-950 hover:bg-indigo-950/20 border border-slate-850 hover:border-indigo-500/30 text-white font-bold text-sm rounded-2xl flex items-center justify-center transition active:scale-95 cursor-pointer font-mono shadow-sm"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPin(prev => prev.slice(0, -1));
+                setError("");
+              }}
+              className="w-full aspect-square bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-slate-400 font-bold text-xs rounded-2xl flex items-center justify-center transition active:scale-95 cursor-pointer font-mono"
+            >
+              Del
+            </button>
+          </div>
+
+          {/* Action button */}
+          <button
+            type="button"
+            onClick={() => handleUnlock(pin)}
+            disabled={!pin}
+            className="w-full py-3.5 bg-indigo-650 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-2xl transition active:scale-98 cursor-pointer shadow-lg shadow-indigo-600/10"
+          >
+            Unlock Module
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Banner */}
@@ -316,6 +618,22 @@ export default function JournalTab() {
           <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
             <span className="w-2.5 h-6 bg-indigo-600 rounded-full inline-block block" />
             Module 3 — Thoughts & Mood Journal
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.removeItem("journal_unlocked");
+                sessionStorage.removeItem("journal_decoy");
+                setUnlocked(false);
+                setDecoyMode(false);
+                setPin("");
+              }}
+              className="p-1.5 bg-slate-950 border border-slate-850 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 rounded-xl transition cursor-pointer flex items-center justify-center shrink-0"
+              title="Lock Journal Module"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              </svg>
+            </button>
           </h2>
           <p className="text-xs text-slate-400 mt-1 font-medium">
             Write, reflect, and track mindfulness logs with attachments support.
@@ -343,7 +661,7 @@ export default function JournalTab() {
       )}
 
       {/* Mood aggregates dashboard layout */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-6 gap-3">
         {MOODS.map((m) => {
           const count = moodAggregation[m.value] || 0;
           return (
@@ -388,7 +706,7 @@ export default function JournalTab() {
             {/* Mood trigger */}
             <div>
               <label className="block text-2xs text-slate-400 uppercase tracking-wider mb-2 font-mono">Current Mood</label>
-              <div className="grid grid-cols-5 gap-1">
+              <div className="grid grid-cols-6 gap-1">
                 {MOODS.map((m) => (
                   <button
                     key={m.value}
@@ -435,17 +753,12 @@ export default function JournalTab() {
                       input.onchange = async (e: any) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          setUploading(true);
-                          setFormError("");
-                          try {
-                            const attach = await handleFileUpload(file, "journals", file.name || "photo.jpg");
-                            setAttachments((prev) => [...prev, attach]);
-                          } catch (err: any) {
-                            console.error("Camera capture error:", err);
-                            setFormError(err.message || "Failed to process captured image.");
-                          } finally {
-                            setUploading(false);
-                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setCropImageSrc(reader.result as string);
+                            setCropImageName(file.name || "photo.jpg");
+                          };
+                          reader.readAsDataURL(file);
                         }
                       };
                       input.click();
@@ -743,6 +1056,34 @@ export default function JournalTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {cropImageSrc && (
+        <ImageCropperModal
+          imageSrc={cropImageSrc}
+          imageName={cropImageName}
+          onCrop={async (croppedFile) => {
+            setCropImageSrc("");
+            setUploading(true);
+            setFormError("");
+            try {
+              const attach = await handleFileUpload(croppedFile, "journals", croppedFile.name);
+              setAttachments((prev) => [...prev, attach]);
+            } catch (err: any) {
+              console.error("Camera capture error:", err);
+              setFormError(err.message || "Failed to process captured image.");
+            } finally {
+              setUploading(false);
+            }
+          }}
+          onCancel={() => setCropImageSrc("")}
+          onRetake={() => {
+            setCropImageSrc("");
+            // Click visual trigger by triggering a file dialog
+            const clickTrigger = document.querySelector("#journal-lists")?.parentElement?.querySelector("button[type='button']");
+            if (clickTrigger) (clickTrigger as HTMLElement).click();
+          }}
+        />
       )}
 
     </div>
